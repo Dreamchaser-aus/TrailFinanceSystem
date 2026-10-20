@@ -933,11 +933,11 @@ def create_app(test_config=None):
     def logout(): logout_user();session.pop('platform_id',None);return redirect(url_for('login'))
 
     def dashboard_utc_window(start_day, end_day):
-        """Inclusive selected closing dates, converted to one half-open UTC range.
+        """Business-day labels refer to the local interval starting at closing time.
 
-        A selected date labels the period ENDING at its configured local closing.
-        Changes to the closing policy affect future reporting; historical snapshots
-        should be viewed using immutable ClosingPeriod rows.
+        E.g. Melbourne 00:00 on Oct 20 labels the interval Oct 20 00:00
+        through Oct 21 00:00. Current-day reports stop at the current instant.
+        Historical closing snapshots are only matched on their exact UTC boundary.
         """
         policy = db.session.get(ClosingPolicy, 1)
         auto = policy.auto_timezone if policy else True
@@ -945,12 +945,31 @@ def create_app(test_config=None):
         hour = policy.closing_hour if policy else 7
         minute = policy.closing_minute if policy else 0
         zone = effective_timezone(auto, offset)
+
         def boundary(d):
-            local = datetime.combine(d, time(hour, minute), tzinfo=zone)
-            # Resolve DST gaps/overlaps consistently with the closing engine.
-            prior = datetime.combine(d - timedelta(days=1), time(23, 59), tzinfo=zone).astimezone(timezone.utc)
-            return next_boundary(prior, hour, minute, auto, offset)
-        return boundary(start_day - timedelta(days=1)), boundary(end_day)
+            # Choose the first valid occurrence on the specified local date.
+            # For a DST gap, use the first real time after the gap.
+            candidates = []
+            for fold in (0, 1):
+                local = datetime.combine(d, time(hour, minute)).replace(tzinfo=zone, fold=fold)
+                instant = local.astimezone(timezone.utc)
+                if instant.astimezone(zone).replace(tzinfo=None) == local.replace(tzinfo=None):
+                    candidates.append(instant)
+            if candidates:
+                return min(candidates)
+            # A nonexistent clock time on DST spring-forward day: use the
+            # earliest next valid boundary (not an imaginary local instant).
+            probe = datetime.combine(d, time(0, 0), tzinfo=zone).astimezone(timezone.utc) - timedelta(seconds=1)
+            return next_boundary(probe, hour, minute, auto, offset)
+
+        start = boundary(start_day)
+        end = boundary(end_day + timedelta(days=1))
+        # When today's configured closing hour has not yet arrived, the
+        # currently open business period began at yesterday's closing.
+        if start_day == end_day == business_today() and start > now():
+            start = boundary(start_day - timedelta(days=1))
+            end = boundary(start_day)
+        return start, end
 
     @app.get('/')
     @login_required
@@ -965,14 +984,52 @@ def create_app(test_config=None):
         history_by_bank = {}
         for h in history:
             history_by_bank.setdefault(h.bank_id, []).append(h)
-        range_start_utc, range_end_utc = dashboard_utc_window(start_day, day)
+        range_start_utc, scheduled_end_utc = dashboard_utc_window(start_day, day)
+        # Never include future transactions in a live (unfinished) period.
+        range_end_utc = min(scheduled_end_utc, now())
+        if range_end_utc <= range_start_utc:
+            # The selected business-day period has not started yet.
+            range_end_utc = range_start_utc
         day_end = range_end_utc
-        existing = [b for b in all_banks if b.created_at is None or b.created_at.astimezone(timezone.utc) < day_end]
-        statuses = {b.id: bank_status_on(b, day, history_by_bank) for b in existing}
-        period_stats = utc_bank_overview(db, Bank, Entry, Transaction, existing, range_start_utc, range_end_utc)
+        existing = [b for b in all_banks if b.created_at is None or _utc_db(b.created_at) < day_end]
+        statuses = {b.id: (b.status if day == business_today() else bank_status_on(b, day, history_by_bank)) for b in existing}
+        period_stats = (utc_bank_overview(db, Bank, Entry, Transaction, existing, range_start_utc, range_end_utc)
+                        if range_end_utc > range_start_utc else {})
+        if not period_stats:
+            period_stats = {b.id: dict(opening=money(b.opening_balance),in_amount=Decimal('0'),out_amount=Decimal('0'),in_count=0,out_count=0,day_close=money(b.opening_balance)) for b in existing}
+        # Use immutable snapshots only for a matching single completed period.
+        # A snapshot cannot safely be reused for a multi-day range or different UTC bounds.
+        historical_snapshot_ids = set()
+        historical_unclaimed_missing = set()
+        if start_day == day and scheduled_end_utc <= now() and existing:
+            periods = db.session.execute(select(ClosingPeriod, ClosingFinancialSnapshot)
+                .join(ClosingFinancialSnapshot, ClosingFinancialSnapshot.closing_period_id == ClosingPeriod.id)
+                .where(ClosingPeriod.bank_id.in_([b.id for b in existing]), ClosingPeriod.status == 'closed',
+                       ClosingPeriod.start_utc == range_start_utc, ClosingPeriod.end_utc == scheduled_end_utc)).all()
+            for period, snapshot in periods:
+                period_stats[period.bank_id] = dict(
+                    opening=money(snapshot.opening), in_amount=money(snapshot.incoming),
+                    out_amount=money(snapshot.outgoing),
+                    in_count=period_stats[period.bank_id]['in_count'],
+                    out_count=period_stats[period.bank_id]['out_count'],
+                    day_close=money(snapshot.closing_balance))
+                historical_snapshot_ids.add(period.bank_id)
         bal = {b.id: period_stats[b.id]['day_close'] for b in existing}
         unclaimed_components = unclaimed_balance_components([b.id for b in existing], day)
-        display_bal = {b.id: bal[b.id] + unclaimed_components.get(b.id, Decimal('0.00')) for b in existing}
+        if day < business_today():
+            # Current mutable lead statuses must not masquerade as historical balances.
+            unclaimed_components = {b.id: Decimal('0') for b in existing}
+            historical_unclaimed_missing = {b.id for b in existing}
+            if start_day == day and historical_snapshot_ids:
+                snapshot_rows = db.session.execute(select(ClosingFinancialSnapshot)
+                    .join(ClosingPeriod, ClosingFinancialSnapshot.closing_period_id == ClosingPeriod.id)
+                    .where(ClosingPeriod.bank_id.in_(list(historical_snapshot_ids)),
+                           ClosingPeriod.start_utc == range_start_utc,
+                           ClosingPeriod.end_utc == scheduled_end_utc)).scalars().all()
+                for snap in snapshot_rows:
+                    unclaimed_components[snap.bank_id] = money(snap.unclaimed_amount)
+                    historical_unclaimed_missing.discard(snap.bank_id)
+        display_bal = {b.id: bal[b.id] + unclaimed_components.get(b.id, Decimal('0')) for b in existing}
         # "Bank Block" means status=closed; other issues remain in the closing total.
         blocked = [b for b in existing if statuses[b.id] == 'closed']
         active_banks = [b for b in existing if statuses[b.id] == 'active']
@@ -1068,6 +1125,7 @@ def create_app(test_config=None):
             active_with_unclaimed=sum((display_bal[b.id] for b in active_banks), Decimal('0')),
             total_unclaimed=sum((unclaimed_components.get(b.id, Decimal('0')) for b in active_banks), Decimal('0')),
             ledger_balances=bal,
+            historical_unclaimed_missing=historical_unclaimed_missing,
             bank_page=bank_page, bank_pages=bank_pages, active_count=len(active_banks),
             available_bank_groups=available_bank_groups, selected_bank_groups=selected_bank_groups,
             filtered_bank_count=len(filtered_active_banks),
