@@ -976,14 +976,18 @@ def create_app(test_config=None):
         # "Bank Block" means status=closed; other issues remain in the closing total.
         blocked = [b for b in existing if statuses[b.id] == 'closed']
         active_banks = [b for b in existing if statuses[b.id] == 'active']
+        # Bank groups are the existing Bank.kind values, scoped to the current platform.
+        available_bank_groups = sorted({b.kind for b in active_banks if b.kind})
+        requested_bank_groups = request.args.getlist('bank_group')
+        selected_bank_groups = [g for g in available_bank_groups if g in requested_bank_groups]
+        filtered_active_banks = ([b for b in active_banks if b.kind in selected_bank_groups]
+                                 if selected_bank_groups else active_banks)
         dashboard_bank_stats = {b.id: type('PeriodStats', (), period_stats[b.id])() for b in active_banks}
         closing_total = sum((bal[b.id] for b in existing if statuses[b.id] != 'closed'), Decimal('0'))
         active_total = sum((bal[b.id] for b in active_banks), Decimal('0'))
-        start = (bank_page - 1) * 10
-        bank_items = active_banks[start:start + 10]
-        bank_pages = max(1, (len(active_banks) + 9) // 10)
+        bank_pages = max(1, (len(filtered_active_banks) + 9) // 10)
         bank_page = min(bank_page, bank_pages)
-        bank_items = active_banks[(bank_page-1)*10:bank_page*10]
+        bank_items = filtered_active_banks[(bank_page-1)*10:bank_page*10]
         rows = db.session.execute(
             select(Transaction.kind, func.count(Transaction.id), func.coalesce(func.sum(Transaction.signed_amount), 0))
             .where(Transaction.created_at >= range_start_utc, Transaction.created_at < range_end_utc, Transaction.status == 'confirmed',platform_scope(Transaction))
@@ -1065,6 +1069,11 @@ def create_app(test_config=None):
             total_unclaimed=sum((unclaimed_components.get(b.id, Decimal('0')) for b in active_banks), Decimal('0')),
             ledger_balances=bal,
             bank_page=bank_page, bank_pages=bank_pages, active_count=len(active_banks),
+            available_bank_groups=available_bank_groups, selected_bank_groups=selected_bank_groups,
+            filtered_bank_count=len(filtered_active_banks),
+            filtered_ledger_total=sum((bal[b.id] for b in filtered_active_banks), Decimal('0')),
+            filtered_unclaimed_total=sum((unclaimed_components.get(b.id, Decimal('0')) for b in filtered_active_banks), Decimal('0')),
+            filtered_with_unclaimed_total=sum((display_bal[b.id] for b in filtered_active_banks), Decimal('0')),
             block_count=len(blocked), block_banks=blocked, closing_total=closing_total,
             closed_banks=closed_page.items, closed_page=closed_page,
             closed_count=closed_page.total, statuses=statuses, range_start_utc=range_start_utc, range_end_utc=range_end_utc)
