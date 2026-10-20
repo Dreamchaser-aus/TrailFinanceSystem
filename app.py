@@ -1033,20 +1033,13 @@ def create_app(test_config=None):
         # "Bank Block" means status=closed; other issues remain in the closing total.
         blocked = [b for b in existing if statuses[b.id] == 'closed']
         active_banks = [b for b in existing if statuses[b.id] == 'active']
-        # Categories are platform-scoped, independent of immutable closing history.
-        pid = require_single_platform()
-        category_labels = BankLabel.query.filter_by(platform_id=pid).order_by(BankLabel.name).all()
-        label_ids = {label.id for label in category_labels}
-        assignments = (BankLabelAssignment.query.filter(BankLabelAssignment.bank_id.in_([b.id for b in existing])).all()
-                       if existing else [])
+        # Bank balance tabs use existing bank groups and statuses only.
+        category_labels = []
         bank_category_ids = {b.id: set() for b in existing}
-        for assignment in assignments:
-            if assignment.label_id in label_ids:
-                bank_category_ids[assignment.bank_id].add(assignment.label_id)
         available_bank_groups = sorted({b.kind for b in existing if b.kind})
         selected_bank_groups = [g for g in available_bank_groups if g in request.args.getlist('bank_group')]
         selected_category = request.args.get('category', 'active')
-        allowed_categories = {'active', 'all', 'problem', 'group:deposit', 'group:withdrawal', 'group:store', 'group:other'} | label_ids
+        allowed_categories = {'active', 'all', 'problem', 'group:deposit', 'group:withdrawal', 'group:store', 'group:other'}
         if selected_category not in allowed_categories:
             selected_category = 'active'
         problem_statuses = set(BANK_STATUSES) - {'active', 'closed'}
@@ -1060,7 +1053,7 @@ def create_app(test_config=None):
         elif selected_category.startswith('group:'):
             category_banks = [b for b in existing if b.kind == selected_category.split(':', 1)[1]]
         else:
-            category_banks = [b for b in existing if selected_category in bank_category_ids[b.id]]
+            category_banks = active_banks
         filtered_active_banks = ([b for b in category_banks if b.kind in selected_bank_groups]
                                  if selected_bank_groups else category_banks)
         dashboard_bank_stats = {b.id: type('PeriodStats', (), period_stats[b.id])() for b in existing}
