@@ -34,18 +34,11 @@
 {% if can("view_bank_balances") %}<div class="card p-3 mb-3" id="bank-balances">
 <div class="d-flex flex-wrap align-items-center gap-2 mb-3">
   {% for value,title in [('active','Active Banks'),('group:deposit','Deposit Bank'),('group:withdrawal','Withdraw Bank'),('group:store','Store'),('problem','Problem Bank'),('all','All Banks')] %}
-  <a class="btn btn-sm {{'btn-primary' if selected_category==value else 'btn-outline-primary'}}" href="{{url_for('dashboard',start_date=start_day.isoformat(),end_date=selected_day.isoformat(),category=value,bank_group=selected_bank_groups)}}#bank-balances">{{title}}</a>
+  <a data-bank-tab="1" class="btn btn-sm {{'btn-primary' if selected_category==value else 'btn-outline-primary'}}" href="{{url_for('dashboard',start_date=start_day.isoformat(),end_date=selected_day.isoformat(),category=value,bank_group=selected_bank_groups)}}">{{title}}</a>
   {% endfor %}
-  {% for tag in category_labels %}<a class="btn btn-sm {{'btn-primary' if selected_category==tag.id else 'btn-outline-primary'}}" href="{{url_for('dashboard',start_date=start_day.isoformat(),end_date=selected_day.isoformat(),category=tag.id,bank_group=selected_bank_groups)}}#bank-balances">{{tag.name}}</a>{% endfor %}
-  {% if can('manage_bank_labels') %}<button class="btn btn-sm btn-outline-secondary" data-bs-toggle="collapse" data-bs-target="#bank-category-management" type="button">Manage Custom Categories</button>{% endif %}
+
 </div>
-{% if can('manage_bank_labels') %}<div class="collapse mb-3" id="bank-category-management"><div class="border rounded p-3">
-  <form class="row g-2 mb-3" method="post" action="{{url_for('create_bank_label')}}"><input type="hidden" name="csrf_token" value="{{csrf_token()}}"><input type="hidden" name="return_to" value="dashboard"><div class="col-md-8"><input class="form-control form-control-sm" name="name" maxlength="60" placeholder="New optional custom category (e.g. VIP, Review...)" required></div><div class="col-md-4"><button class="btn btn-sm btn-primary">Add Category</button></div></form>
-  {% for tag in category_labels %}<div class="d-flex flex-wrap gap-2 align-items-center mb-2"><form class="d-flex gap-2" method="post" action="{{url_for('rename_bank_category',label_id=tag.id)}}"><input type="hidden" name="csrf_token" value="{{csrf_token()}}"><input class="form-control form-control-sm" name="name" maxlength="60" value="{{tag.name}}" required><button class="btn btn-sm btn-outline-primary">Rename</button></form><form method="post" action="{{url_for('delete_bank_category',label_id=tag.id)}}" onsubmit="return confirm('Delete category? Assigned categories cannot be deleted.')"><input type="hidden" name="csrf_token" value="{{csrf_token()}}"><button class="btn btn-sm btn-outline-danger">Delete</button></form></div>{% endfor %}
-  <small class="text-muted">A category must be unassigned from all banks before it can be deleted. Historical Closing records are unchanged.</small>
-</div></div>{% endif %}
-<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2"><h5 class="mb-0">Active Bank Balances</h5><form method="get" action="{{url_for('dashboard')}}" class="d-flex align-items-center gap-2"><input type="hidden" name="start_date" value="{{start_day.isoformat()}}"><input type="hidden" name="end_date" value="{{selected_day.isoformat()}}"><input type="hidden" name="category" value="{{selected_category}}"><div class="dropdown"><button class="btn btn-sm btn-outline-primary dropdown-toggle" type="button" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false">Groups: {{selected_bank_groups|join(', ')|title if selected_bank_groups else 'All'}}</button><div class="dropdown-menu p-3 shadow-sm" style="min-width:210px;max-height:300px;overflow-y:auto"><div class="small text-muted mb-2">Select one or multiple groups</div>{% for group in available_bank_groups %}<label class="dropdown-item d-flex gap-2 align-items-center px-1"><input type="checkbox" class="form-check-input mt-0" name="bank_group" value="{{group}}" {% if group in selected_bank_groups %}checked{% endif %}><span>{{group|title}}</span></label>{% else %}<div class="small text-muted">No active bank groups</div>{% endfor %}<div class="d-flex gap-2 mt-2"><button type="submit" class="btn btn-primary btn-sm flex-fill">Apply</button><a class="btn btn-outline-secondary btn-sm" href="{{url_for('dashboard',start_date=start_day.isoformat(),end_date=selected_day.isoformat(),category=selected_category)}}">All</a></div></div></div><small class="text-muted">{{filtered_bank_count}} banks</small></form></div><p class="small text-muted">Opening and IN/OUT use the selected UTC closing-period range. Before Unclaimed is confirmed ledger only; With Unclaimed is for bank-app comparison. Historical Unclaimed uses an exact Closing snapshot when available; otherwise it is shown as unavailable.</p><div class="table-responsive"><table class="table table-hover"><thead><tr><th>Bank</th><th>Group</th><th>Categories</th><th>Status</th><th class="text-end">Opening</th><th class="text-end">Before Unclaimed</th><th class="text-end">Unclaimed</th><th class="text-end">With Unclaimed</th><th class="text-end">IN</th><th class="text-end">OUT</th></tr></thead><tbody>{% for b in banks %}<tr><td>{{b.name}}</td><td>{{b.kind|title}}</td>
-<td>{% if can('manage_bank_labels') %}<form method="post" action="{{url_for('update_bank_categories',bank_id=b.id)}}"><input type="hidden" name="csrf_token" value="{{csrf_token()}}"><input type="hidden" name="return_category" value="{{selected_category}}"><div class="dropdown"><button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown" data-bs-auto-close="outside">Categories ({{bank_category_ids[b.id]|length}})</button><div class="dropdown-menu p-2" style="min-width:190px;max-height:260px;overflow:auto">{% for tag in category_labels %}<label class="dropdown-item"><input type="checkbox" name="label_ids" value="{{tag.id}}" {% if tag.id in bank_category_ids[b.id] %}checked{% endif %}> {{tag.name}}</label>{% else %}<small class="text-muted">Create a category first</small>{% endfor %}<button class="btn btn-primary btn-sm w-100 mt-2">Save</button></div></div></form>{% else %}{% for tag in category_labels %}{% if tag.id in bank_category_ids[b.id] %}<span class="badge bg-secondary">{{tag.name}}</span>{% endif %}{% endfor %}{% endif %}</td>
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2"><h5 class="mb-0">Active Bank Balances</h5><form method="get" action="{{url_for('dashboard')}}" class="d-flex align-items-center gap-2"><input type="hidden" name="start_date" value="{{start_day.isoformat()}}"><input type="hidden" name="end_date" value="{{selected_day.isoformat()}}"><input type="hidden" name="category" value="{{selected_category}}"><div class="dropdown"><button class="btn btn-sm btn-outline-primary dropdown-toggle" type="button" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false">Groups: {{selected_bank_groups|join(', ')|title if selected_bank_groups else 'All'}}</button><div class="dropdown-menu p-3 shadow-sm" style="min-width:210px;max-height:300px;overflow-y:auto"><div class="small text-muted mb-2">Select one or multiple groups</div>{% for group in available_bank_groups %}<label class="dropdown-item d-flex gap-2 align-items-center px-1"><input type="checkbox" class="form-check-input mt-0" name="bank_group" value="{{group}}" {% if group in selected_bank_groups %}checked{% endif %}><span>{{group|title}}</span></label>{% else %}<div class="small text-muted">No active bank groups</div>{% endfor %}<div class="d-flex gap-2 mt-2"><button type="submit" class="btn btn-primary btn-sm flex-fill">Apply</button><a class="btn btn-outline-secondary btn-sm" href="{{url_for('dashboard',start_date=start_day.isoformat(),end_date=selected_day.isoformat(),category=selected_category)}}">All</a></div></div></div><small class="text-muted">{{filtered_bank_count}} banks</small></form></div><p class="small text-muted">Opening and IN/OUT use the selected UTC closing-period range. Before Unclaimed is confirmed ledger only; With Unclaimed is for bank-app comparison. Historical Unclaimed uses an exact Closing snapshot when available; otherwise it is shown as unavailable.</p><div class="table-responsive"><table class="table table-hover"><thead><tr><th>Bank</th><th>Group</th><th>Status</th><th class="text-end">Opening</th><th class="text-end">Before Unclaimed</th><th class="text-end">Unclaimed</th><th class="text-end">With Unclaimed</th><th class="text-end">IN</th><th class="text-end">OUT</th></tr></thead><tbody>{% for b in banks %}<tr><td>{{b.name}}</td><td>{{b.kind|title}}</td>
 <td>
 {% if current_user.role in ('admin','staff') %}
 <button type="button" class="btn btn-sm p-0 border-0 bg-transparent" data-bs-toggle="modal" data-bs-target="#bank-status-modal-{{b.id}}" title="Click to update current bank status" aria-label="Update status for {{b.name}}">
@@ -57,7 +50,7 @@
 <td class="text-end fw-semibold">{{ledger_balances[b.id]|rm}}</td><td class="text-end">{% if b.id in historical_unclaimed_missing %}<span class="text-muted" title="No exact historical Unclaimed snapshot">N/A</span>{% else %}{{dashboard_unclaimed.get(b.id,0)|rm}}{% endif %}</td>
 <td class="text-end fw-bold">{% if b.id in historical_unclaimed_missing %}<span class="text-muted" title="Historical Unclaimed unavailable">N/A</span>{% else %}{{balances[b.id]|rm}}{% endif %}</td>
 <td class="text-end text-success">{{dashboard_bank_stats[b.id].in_count}}<div class="small">{{dashboard_bank_stats[b.id].in_amount|rm}}</div></td>
-<td class="text-end text-danger">{{dashboard_bank_stats[b.id].out_count}}<div class="small">{{dashboard_bank_stats[b.id].out_amount|rm}}</div></td></tr>{% else %}<tr><td colspan="10">No banks in this category</td></tr>{% endfor %}</tbody><tfoot class="table-light fw-bold"><tr><td colspan="5">Total (Selected Category / Groups)</td><td class="text-end">{{filtered_ledger_total|rm}}</td><td class="text-end">{{filtered_unclaimed_total|rm}}</td><td class="text-end">{{filtered_with_unclaimed_total|rm}}</td><td colspan="2"></td></tr></tfoot></table></div>
+<td class="text-end text-danger">{{dashboard_bank_stats[b.id].out_count}}<div class="small">{{dashboard_bank_stats[b.id].out_amount|rm}}</div></td></tr>{% else %}<tr><td colspan="9">No banks in this category</td></tr>{% endfor %}</tbody><tfoot class="table-light fw-bold"><tr><td colspan="4">Total (Selected Category / Groups)</td><td class="text-end">{{filtered_ledger_total|rm}}</td><td class="text-end">{{filtered_unclaimed_total|rm}}</td><td class="text-end">{{filtered_with_unclaimed_total|rm}}</td><td colspan="2"></td></tr></tfoot></table></div>
 {% if current_user.role in ('admin','staff') %}
 {% for b in banks %}
 <div class="modal fade" id="bank-status-modal-{{b.id}}" tabindex="-1" aria-labelledby="bank-status-title-{{b.id}}" aria-hidden="true">
@@ -95,4 +88,50 @@
 {% else %}<tr><td colspan="5" class="text-muted text-center py-4">No dealers yet. Add a dealer from Banks.</td></tr>{% endfor %}
 </tbody></table></div><small class="text-muted">Positive MYR net = dealer owes us; negative = we owe dealer. Not a confirmed settlement.</small></div>
 {% endif %}
+
+<script>
+// Swap only the balances card when changing its tabs; the page does not reload or jump.
+(function () {
+  let activeRequest = null;
+  async function switchBankTab(link) {
+    const card = document.getElementById('bank-balances');
+    if (!card) return;
+    if (activeRequest) activeRequest.abort();
+    const controller = new AbortController();
+    activeRequest = controller;
+    const url = link.href;
+    card.setAttribute('aria-busy', 'true');
+    try {
+      const response = await fetch(url, {credentials: 'same-origin', signal: controller.signal, headers: {'X-Requested-With': 'XMLHttpRequest'}});
+      if (!response.ok) throw new Error('Failed to load bank balances');
+      const documentResult = new DOMParser().parseFromString(await response.text(), 'text/html');
+      const updated = documentResult.getElementById('bank-balances');
+      if (!updated) throw new Error('Bank balances section not found');
+      if (activeRequest !== controller) return;
+      // Preserve the current viewport position even if the card changes height.
+      const before = card.getBoundingClientRect().top;
+      card.replaceWith(updated);
+      const after = updated.getBoundingClientRect().top;
+      if (Math.abs(after - before) > 1) window.scrollBy({top: after - before, behavior: 'instant'});
+      history.pushState({bankTab: true}, '', url);
+    } catch (error) {
+      if (error.name !== 'AbortError') window.location.assign(url);
+    } finally {
+      if (activeRequest === controller) {
+        activeRequest = null;
+        const current = document.getElementById('bank-balances');
+        if (current) current.removeAttribute('aria-busy');
+      }
+    }
+  }
+  document.addEventListener('click', function (event) {
+    const link = event.target.closest('#bank-balances a[data-bank-tab]');
+    if (!link || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey || event.button !== 0) return;
+    event.preventDefault();
+    switchBankTab(link);
+  });
+  window.addEventListener('popstate', function () { window.location.reload(); });
+})();
+</script>
+
 {% endblock %}
