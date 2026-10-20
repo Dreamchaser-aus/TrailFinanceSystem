@@ -1046,16 +1046,19 @@ def create_app(test_config=None):
         available_bank_groups = sorted({b.kind for b in existing if b.kind})
         selected_bank_groups = [g for g in available_bank_groups if g in request.args.getlist('bank_group')]
         selected_category = request.args.get('category', 'active')
-        allowed_categories = {'active', 'all', 'problem'} | label_ids
+        allowed_categories = {'active', 'all', 'problem', 'group:deposit', 'group:withdrawal', 'group:store', 'group:other'} | label_ids
         if selected_category not in allowed_categories:
             selected_category = 'active'
-        problem_statuses = {'cannot_transfer', 'login_failed', 'wrong_password', 'other_issue'}
+        problem_statuses = set(BANK_STATUSES) - {'active', 'closed'}
         if selected_category == 'active':
             category_banks = active_banks
         elif selected_category == 'all':
             category_banks = existing
         elif selected_category == 'problem':
-            category_banks = [b for b in existing if statuses[b.id] in problem_statuses]
+            # Operational problem queue always reflects CURRENT status, even when viewing historical balances.
+            category_banks = [b for b in existing if b.status not in ('active', 'closed')]
+        elif selected_category.startswith('group:'):
+            category_banks = [b for b in existing if b.kind == selected_category.split(':', 1)[1]]
         else:
             category_banks = [b for b in existing if selected_category in bank_category_ids[b.id]]
         filtered_active_banks = ([b for b in category_banks if b.kind in selected_bank_groups]
@@ -1316,7 +1319,7 @@ def create_app(test_config=None):
         destination = 'dashboard' if request.form.get('return_to') == 'dashboard' else 'banks'
         def status_return():
             if destination == 'dashboard':
-                return redirect(url_for('dashboard',start_date=request.form.get('start_date'),end_date=request.form.get('end_date'),category=request.form.get('category','active')) + '#bank-balances')
+                return redirect(url_for('dashboard',start_date=request.form.get('start_date'),end_date=request.form.get('end_date'),category=request.form.get('category','active'),bank_group=request.form.getlist('bank_group')) + '#bank-balances')
             return redirect(url_for('banks'))
         new_status=request.form.get('status','').strip()
         remark=request.form.get('remark','').strip()
