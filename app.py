@@ -239,7 +239,7 @@ class BankLabel(db.Model):
 class BankLabelAssignment(db.Model):
     __tablename__='bank_label_assignment'
     bank_id=db.Column(db.String(36),db.ForeignKey('bank.id'),primary_key=True)
-    label_id=db.Column(db.String(36),db.ForeignKey('bank_label.id'),nullable=False,index=True)
+    label_id=db.Column(db.String(36),db.ForeignKey('bank_label.id'),primary_key=True,index=True)
 
 class BankStatusHistory(db.Model):
     __tablename__='bank_status_history'
@@ -1033,13 +1033,34 @@ def create_app(test_config=None):
         # "Bank Block" means status=closed; other issues remain in the closing total.
         blocked = [b for b in existing if statuses[b.id] == 'closed']
         active_banks = [b for b in existing if statuses[b.id] == 'active']
-        # Bank groups are the existing Bank.kind values, scoped to the current platform.
-        available_bank_groups = sorted({b.kind for b in active_banks if b.kind})
-        requested_bank_groups = request.args.getlist('bank_group')
-        selected_bank_groups = [g for g in available_bank_groups if g in requested_bank_groups]
-        filtered_active_banks = ([b for b in active_banks if b.kind in selected_bank_groups]
-                                 if selected_bank_groups else active_banks)
-        dashboard_bank_stats = {b.id: type('PeriodStats', (), period_stats[b.id])() for b in active_banks}
+        # Categories are platform-scoped, independent of immutable closing history.
+        pid = require_single_platform()
+        category_labels = BankLabel.query.filter_by(platform_id=pid).order_by(BankLabel.name).all()
+        label_ids = {label.id for label in category_labels}
+        assignments = (BankLabelAssignment.query.filter(BankLabelAssignment.bank_id.in_([b.id for b in existing])).all()
+                       if existing else [])
+        bank_category_ids = {b.id: set() for b in existing}
+        for assignment in assignments:
+            if assignment.label_id in label_ids:
+                bank_category_ids[assignment.bank_id].add(assignment.label_id)
+        available_bank_groups = sorted({b.kind for b in existing if b.kind})
+        selected_bank_groups = [g for g in available_bank_groups if g in request.args.getlist('bank_group')]
+        selected_category = request.args.get('category', 'active')
+        allowed_categories = {'active', 'all', 'problem'} | label_ids
+        if selected_category not in allowed_categories:
+            selected_category = 'active'
+        problem_statuses = {'cannot_transfer', 'login_failed', 'wrong_password', 'other_issue'}
+        if selected_category == 'active':
+            category_banks = active_banks
+        elif selected_category == 'all':
+            category_banks = existing
+        elif selected_category == 'problem':
+            category_banks = [b for b in existing if statuses[b.id] in problem_statuses]
+        else:
+            category_banks = [b for b in existing if selected_category in bank_category_ids[b.id]]
+        filtered_active_banks = ([b for b in category_banks if b.kind in selected_bank_groups]
+                                 if selected_bank_groups else category_banks)
+        dashboard_bank_stats = {b.id: type('PeriodStats', (), period_stats[b.id])() for b in existing}
         closing_total = sum((bal[b.id] for b in existing if statuses[b.id] != 'closed'), Decimal('0'))
         active_total = sum((bal[b.id] for b in active_banks), Decimal('0'))
         bank_pages = max(1, (len(filtered_active_banks) + 9) // 10)
@@ -1128,6 +1149,8 @@ def create_app(test_config=None):
             historical_unclaimed_missing=historical_unclaimed_missing,
             bank_page=bank_page, bank_pages=bank_pages, active_count=len(active_banks),
             available_bank_groups=available_bank_groups, selected_bank_groups=selected_bank_groups,
+            category_labels=category_labels, selected_category=selected_category, bank_category_ids=bank_category_ids,
+            bank_status_options=BANK_STATUSES, problem_statuses=problem_statuses,
             filtered_bank_count=len(filtered_active_banks),
             filtered_ledger_total=sum((bal[b.id] for b in filtered_active_banks), Decimal('0')),
             filtered_unclaimed_total=sum((unclaimed_components.get(b.id, Decimal('0')) for b in filtered_active_banks), Decimal('0')),
@@ -1135,6 +1158,54 @@ def create_app(test_config=None):
             block_count=len(blocked), block_banks=blocked, closing_total=closing_total,
             closed_banks=closed_page.items, closed_page=closed_page,
             closed_count=closed_page.total, statuses=statuses, range_start_utc=range_start_utc, range_end_utc=range_end_utc)
+
+    @app.post('/bank-categories/<label_id>/rename')
+    @login_required
+    def rename_bank_category(label_id):
+        require_permission('manage_bank_labels')
+        label=db.session.get(BankLabel,label_id)
+        if not label or label.platform_id!=require_single_platform(): abort(404)
+        name=request.form.get('name','').strip()[:60]
+        if not name: abort(400)
+        old=label.name
+        try:
+            label.name=name
+            db.session.add(Audit(actor_id=current_user.id,action='RENAME_BANK_CATEGORY',detail=f'{label.id}: {old} -> {name}'))
+            db.session.commit();flash('Category renamed','success')
+        except IntegrityError:
+            db.session.rollback();flash('Category name already exists','warning')
+        return redirect(url_for('dashboard',category=label.id))
+
+    @app.post('/bank-categories/<label_id>/delete')
+    @login_required
+    def delete_bank_category(label_id):
+        require_permission('manage_bank_labels')
+        label=db.session.get(BankLabel,label_id)
+        if not label or label.platform_id!=require_single_platform(): abort(404)
+        if BankLabelAssignment.query.filter_by(label_id=label.id).first():
+            flash('Category is assigned to banks. Unassign banks before deleting.','warning')
+            return redirect(url_for('dashboard',category=label.id))
+        db.session.add(Audit(actor_id=current_user.id,action='DELETE_BANK_CATEGORY',detail=f'{label.id} {label.name}'))
+        db.session.delete(label);db.session.commit();flash('Category deleted','success')
+        return redirect(url_for('dashboard'))
+
+    @app.post('/banks/<bank_id>/categories')
+    @login_required
+    def update_bank_categories(bank_id):
+        require_permission('manage_bank_labels')
+        pid=require_single_platform()
+        bank_for_platform(bank_id,pid)
+        chosen=set(request.form.getlist('label_ids'))
+        allowed={x.id for x in BankLabel.query.filter_by(platform_id=pid).all()}
+        if not chosen.issubset(allowed): abort(400)
+        current={x.label_id for x in BankLabelAssignment.query.filter_by(bank_id=bank_id).all()}
+        for removed in current-chosen:
+            db.session.delete(db.session.get(BankLabelAssignment,(bank_id,removed)))
+        for added in chosen-current:
+            db.session.add(BankLabelAssignment(bank_id=bank_id,label_id=added))
+        db.session.add(Audit(actor_id=current_user.id,action='UPDATE_BANK_CATEGORIES',detail=f'{bank_id}: {sorted(current)} -> {sorted(chosen)}'))
+        db.session.commit();flash('Bank categories saved','success')
+        return redirect(url_for('dashboard',category=request.form.get('return_category','active')))
 
     @app.post('/bank-labels')
     @login_required
@@ -1150,7 +1221,7 @@ def create_app(test_config=None):
             db.session.commit();flash('Bank tag created','success')
         except IntegrityError:
             db.session.rollback();flash('This tag already exists on this platform','warning')
-        return redirect(url_for('banks'))
+        return redirect(url_for('dashboard') if request.form.get('return_to')=='dashboard' else url_for('banks'))
 
     @app.post('/banks/<bank_id>/label')
     @login_required
@@ -1161,8 +1232,9 @@ def create_app(test_config=None):
         label_id=request.form.get('label_id','').strip()
         label=db.session.get(BankLabel,label_id) if label_id else None
         if label_id and (not label or label.platform_id!=pid):abort(403)
-        assignment=db.session.get(BankLabelAssignment,bank_id)
-        if assignment:db.session.delete(assignment);db.session.flush()
+        existing_assignments=BankLabelAssignment.query.filter_by(bank_id=bank_id).all()
+        for assignment in existing_assignments: db.session.delete(assignment)
+        db.session.flush()
         if label:db.session.add(BankLabelAssignment(bank_id=bank_id,label_id=label.id))
         db.session.add(Audit(actor_id=current_user.id,action='ASSIGN_BANK_LABEL',detail=f'{bank_id} label={label_id or "none"}'))
         db.session.commit();flash('Bank tag updated','success')
@@ -1241,17 +1313,22 @@ def create_app(test_config=None):
     @role_required('admin','staff')
     def update_bank_status(bank_id):
         bank_for_platform(bank_id,require_single_platform())
+        destination = 'dashboard' if request.form.get('return_to') == 'dashboard' else 'banks'
+        def status_return():
+            if destination == 'dashboard':
+                return redirect(url_for('dashboard',start_date=request.form.get('start_date'),end_date=request.form.get('end_date'),category=request.form.get('category','active')) + '#bank-balances')
+            return redirect(url_for('banks'))
         new_status=request.form.get('status','').strip()
         remark=request.form.get('remark','').strip()
         if new_status not in BANK_STATUSES:
             flash('Invalid bank status','danger')
-            return redirect(url_for('banks'))
+            return status_return()
         if len(remark)>2000:
             flash('Remark must be 2000 characters or fewer','danger')
-            return redirect(url_for('banks'))
+            return status_return()
         if new_status!='active' and not remark:
             flash('A reason is required when reporting a bank issue','danger')
-            return redirect(url_for('banks'))
+            return status_return()
         try:
             locked=lock_banks([bank_id])
             if len(locked)!=1: abort(404)
@@ -1260,7 +1337,7 @@ def create_app(test_config=None):
             if old_status==new_status and (bank.status_remark or '')==remark:
                 db.session.rollback()
                 flash('No changes to save','info')
-                return redirect(url_for('banks'))
+                return status_return()
             bank.status=new_status
             bank.status_remark=remark or None
             bank.status_updated_at=now()
@@ -1293,7 +1370,7 @@ def create_app(test_config=None):
         except Exception:
             db.session.rollback()
             raise
-        return redirect(url_for('banks'))
+        return status_return()
 
     @app.get('/banks/<bank_id>/blocked-settlements')
     @login_required
