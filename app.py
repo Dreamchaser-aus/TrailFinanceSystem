@@ -1067,7 +1067,11 @@ def create_app(test_config=None):
             .where(Transaction.created_at >= range_start_utc, Transaction.created_at < range_end_utc, Transaction.status == 'confirmed',platform_scope(Transaction))
             .group_by(Transaction.kind)).all()
         totals = {k: {'count': n, 'amount': money(v)} for k, n, v in rows}
-        latest = (Transaction.query.filter(Transaction.created_at >= range_start_utc, Transaction.created_at < range_end_utc,platform_scope(Transaction))
+        # Latest Transactions is always the CURRENT business/closing day, independent of Dashboard report filters.
+        latest_start_utc, latest_scheduled_end_utc = dashboard_utc_window(business_today(), business_today())
+        latest_end_utc = min(latest_scheduled_end_utc, now())
+        latest = (Transaction.query.filter(Transaction.created_at >= latest_start_utc,
+                                           Transaction.created_at < latest_end_utc, platform_scope(Transaction))
                   .order_by(Transaction.created_at.desc(), Transaction.id.desc()).limit(20).all())
         platform_names = {p.id:p.name for p in Platform.query.filter(Platform.id.in_({t.platform_id for t in latest})).all()} if latest else {}
         void_audits = (TransactionAudit.query.filter(TransactionAudit.transaction_id.in_([t.id for t in latest]),TransactionAudit.action=='VOID').order_by(TransactionAudit.created_at.desc()).all() if latest else [])
@@ -1614,7 +1618,10 @@ def create_app(test_config=None):
     def transactions():
         from sqlalchemy import or_
         day = selected_date()
-        q = Transaction.query.filter(Transaction.business_date == day,platform_scope(Transaction))
+        all_dates = request.args.get('all_dates') == '1'
+        q = Transaction.query.filter(platform_scope(Transaction))
+        if not all_dates:
+            q = q.filter(Transaction.business_date == day)
         search = request.args.get('search', '').strip()
         kinds = [v for v in request.args.getlist('kind')
                  if v in ('deposit', 'withdrawal', 'transfer','dealer_sell','dealer_buy','dealer_payout')]
@@ -1666,7 +1673,7 @@ def create_app(test_config=None):
         return render_template('transactions.html', records=records,
                                transaction_banks=transaction_banks,
                                banks=Bank.query.filter(platform_scope(Bank)).order_by(Bank.name).all(),
-                               search=search, kinds=kinds, bank_id=bank_id, selected_day=day)
+                               search=search, kinds=kinds, bank_id=bank_id, selected_day=day, all_dates=all_dates)
 
     @app.get('/audit/transactions')
     @login_required
@@ -2004,4 +2011,3 @@ def create_app(test_config=None):
     return app
 
 app=create_app()
-
