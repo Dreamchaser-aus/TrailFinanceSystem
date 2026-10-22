@@ -1311,8 +1311,10 @@ def create_app(test_config=None):
     @role_required('admin','staff')
     def update_bank_status(bank_id):
         bank_for_platform(bank_id,require_single_platform())
-        destination = 'dashboard' if request.form.get('return_to') == 'dashboard' else 'banks'
+        destination = request.form.get('return_to') if request.form.get('return_to') in ('dashboard','new_transaction') else 'banks'
         def status_return():
+            if destination == 'new_transaction':
+                return redirect(url_for('new_transaction') + '#newtx-bank-balances')
             if destination == 'dashboard':
                 return redirect(url_for('dashboard',start_date=request.form.get('start_date'),end_date=request.form.get('end_date'),category=request.form.get('category','active'),bank_group=request.form.getlist('bank_group')) + '#bank-balances')
             return redirect(url_for('banks'))
@@ -1445,7 +1447,7 @@ def create_app(test_config=None):
                     Transaction.created_at < min(today_scheduled_end_utc, now()))
                 recent=db.session.execute(movement_query.limit(20)).all()
                 recent_pagination=None
-        return render_template('transaction.html',entry_today=business_today().isoformat(),entry_yesterday=(business_today()-timedelta(days=1)).isoformat(),banks=Bank.query.filter(platform_scope(Bank),Bank.active==True).order_by(Bank.name).all(),dealers=Dealer.query.filter(platform_scope(Dealer),Dealer.active==True).order_by(Dealer.name).all(),balance_banks=balance_banks,balance_values=balance_values,bank_stats=bank_stats,recent=recent,recent_pagination=recent_pagination,movement_search=request.args.get('movement_search','').strip()[:120],movement_bank=request.args.get('movement_bank','').strip()[:36])
+        return render_template('transaction.html',entry_today=business_today().isoformat(),entry_yesterday=(business_today()-timedelta(days=1)).isoformat(),banks=Bank.query.filter(platform_scope(Bank),Bank.active==True).order_by(Bank.name).all(),dealers=Dealer.query.filter(platform_scope(Dealer),Dealer.active==True).order_by(Dealer.name).all(),balance_banks=balance_banks,balance_values=balance_values,bank_stats=bank_stats,recent=recent,recent_pagination=recent_pagination,bank_status_options=BANK_STATUSES,movement_search=request.args.get('movement_search','').strip()[:120],movement_bank=request.args.get('movement_bank','').strip()[:36])
 
     @app.get('/banks/<bank_id>/investigation')
     @login_required
