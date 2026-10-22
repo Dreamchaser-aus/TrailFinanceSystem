@@ -1303,7 +1303,10 @@ def create_app(test_config=None):
             except InvalidToken: abort(500,'Unable to decrypt stored credential')
         db.session.add(Audit(actor_id=current_user.id,action='REVEAL_BANK_PASSWORD',detail=f'bank={bank.id}'))
         db.session.commit()
-        response=app.make_response(render_template('bank_password_reveal.html',bank=bank,password=password))
+        if request.accept_mimetypes.best == 'application/json':
+            response=app.json.response({'password':password or ''})
+        else:
+            response=app.make_response(render_template('bank_password_reveal.html',bank=bank,password=password))
         response.headers['Cache-Control']='no-store, private'
         return response
 
@@ -1447,7 +1450,7 @@ def create_app(test_config=None):
                     Transaction.created_at < min(today_scheduled_end_utc, now()))
                 recent=db.session.execute(movement_query.limit(20)).all()
                 recent_pagination=None
-        return render_template('transaction.html',entry_today=business_today().isoformat(),entry_yesterday=(business_today()-timedelta(days=1)).isoformat(),banks=Bank.query.filter(platform_scope(Bank),Bank.active==True).order_by(Bank.name).all(),dealers=Dealer.query.filter(platform_scope(Dealer),Dealer.active==True).order_by(Dealer.name).all(),balance_banks=balance_banks,balance_values=balance_values,bank_stats=bank_stats,recent=recent,recent_pagination=recent_pagination,bank_status_options=BANK_STATUSES,movement_search=request.args.get('movement_search','').strip()[:120],movement_bank=request.args.get('movement_bank','').strip()[:36])
+        return render_template('transaction.html',entry_today=business_today().isoformat(),entry_yesterday=(business_today()-timedelta(days=1)).isoformat(),banks=Bank.query.filter(platform_scope(Bank),Bank.active==True).order_by(Bank.name).all(),dealers=Dealer.query.filter(platform_scope(Dealer),Dealer.active==True).order_by(Dealer.name).all(),balance_banks=balance_banks,balance_values=balance_values,bank_stats=bank_stats,recent=recent,recent_pagination=recent_pagination,bank_status_options=BANK_STATUSES,bank_details_map={d.bank_id:d for d in BankDetail.query.filter(BankDetail.bank_id.in_([b.id for b in balance_banks])).all()} if permitted('view_bank_details') and balance_banks else {},movement_search=request.args.get('movement_search','').strip()[:120],movement_bank=request.args.get('movement_bank','').strip()[:36])
 
     @app.get('/banks/<bank_id>/investigation')
     @login_required
