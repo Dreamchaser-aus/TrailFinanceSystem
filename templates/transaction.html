@@ -2,7 +2,7 @@
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
   <div><h3 class="mb-1">New Transaction</h3><div class="text-muted">Record transactions and review updated bank balances in one place</div></div>
-  <div class="d-flex gap-2"><button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#newTransactionEntryModal">+ Add Transaction</button>{% if can('view_transactions') %}<a class="btn btn-outline-secondary" href="{{url_for('transactions')}}">History</a>{% endif %}</div>
+  <div class="d-flex gap-2"><button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#newTransactionEntryModal">+ Add Transaction</button></div>
 </div>
 <div class="modal fade" id="newTransactionEntryModal" tabindex="-1" aria-labelledby="newTransactionEntryTitle" aria-hidden="true">
  <div class="modal-dialog modal-dialog-centered modal-lg modal-dialog-scrollable"><div class="modal-content">
@@ -39,7 +39,12 @@
  </div></div>
 </div>
 <div class="row g-3"><div class="col-12">
-{% if can('view_bank_balances') %}<div class="card p-3 mb-3" id="newtx-bank-balances"><div class="d-flex justify-content-between align-items-center mb-2"><h5 class="mb-0">Active Bank Balances</h5><a class="btn btn-sm btn-outline-primary" href="{{url_for('new_transaction')}}">↻ Refresh</a></div><p class="small text-muted mb-2">AUD · Active banks only · confirmed ledger balances. Opening / Daily use today's MYT business date.</p><div style="max-height:370px;overflow:auto">{% set overview_banks=balance_banks %}{% set overview_enable_status_edit=true %}{% include '_bank_overview.html' %}</div></div>
+{% if can('view_bank_balances') %}<div class="card p-3 mb-3" id="newtx-bank-balances"><div class="d-flex justify-content-between align-items-center mb-2"><h5 class="mb-0">Active Bank Balances</h5><a class="btn btn-sm btn-outline-primary" href="{{url_for('new_transaction')}}">↻ Refresh</a></div><div class="d-flex flex-wrap gap-2 mb-2" id="newtx-bank-tabs" role="group" aria-label="Bank balance filters">
+{% for value,label in [('active','Active Banks'),('group:deposit','Deposit Bank'),('group:withdrawal','Withdraw Bank'),('group:store','Store'),('problem','Problem Bank'),('all','All Banks')] %}
+<button type="button" class="btn btn-sm {{'btn-primary' if value=='active' else 'btn-outline-primary'}}" data-newtx-bank-tab="{{value}}" aria-pressed="{{'true' if value=='active' else 'false'}}">{{label}}</button>
+{% endfor %}
+</div>
+<p class="small text-muted mb-2">AUD · Confirmed ledger balances · Opening / Daily use today's MYT business date. Problem Bank excludes Active and Block (Closed).</p><div style="max-height:370px;overflow:auto">{% set overview_banks=balance_banks %}{% set overview_enable_status_edit=true %}{% include '_bank_overview.html' %}</div></div>
 {% if current_user.role in ('admin','staff') and can('view_bank_balances') %}
 {% for b in balance_banks %}
 <div class="modal fade" id="newtx-bank-status-modal-{{b.id}}" tabindex="-1" aria-labelledby="newtx-bank-status-title-{{b.id}}" aria-hidden="true">
@@ -156,6 +161,34 @@
     form.submit();
   });
   refresh();
+})();
+</script>
+<script>
+(function () {
+  const tabs = document.querySelectorAll('[data-newtx-bank-tab]');
+  const rows = document.querySelectorAll('[data-newtx-bank-row]');
+  if (!tabs.length || !rows.length) return;
+  function apply(value) {
+    rows.forEach(row => {
+      const group = row.dataset.bankGroup;
+      const status = row.dataset.bankStatus;
+      const active = row.dataset.bankActive === '1';
+      const show = value === 'all' ||
+        (value === 'active' && status === 'active' && active) ||
+        (value === 'problem' && status !== 'active' && status !== 'closed') ||
+        (value.startsWith('group:') && group === value.slice(6));
+      row.hidden = !show;
+      row.style.display = show ? '' : 'none';
+    });
+    tabs.forEach(tab => {
+      const selected = tab.dataset.newtxBankTab === value;
+      tab.classList.toggle('btn-primary', selected);
+      tab.classList.toggle('btn-outline-primary', !selected);
+      tab.setAttribute('aria-pressed', selected ? 'true' : 'false');
+    });
+  }
+  tabs.forEach(tab => tab.addEventListener('click', () => apply(tab.dataset.newtxBankTab)));
+  apply('active');
 })();
 </script>
 {% endblock %}
