@@ -1848,6 +1848,8 @@ def create_app(test_config=None):
         except (ValueError,IntegrityError) as e:
             db.session.rollback();flash(str(e),'danger')
         destination=request.form.get('return_to','')
+        if destination=='new_transaction':
+            return redirect(url_for('new_transaction')+'#latest-transactions')
         if destination=='dashboard':
             start=request.form.get('start_date','')
             end=request.form.get('end_date','')
