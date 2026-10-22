@@ -1390,7 +1390,7 @@ def create_app(test_config=None):
                     db.session.add(Dealer(name=name,platform_id=pid));db.session.commit();flash('Dealer added','success')
                 except IntegrityError:
                     db.session.rollback();flash('Dealer already exists','danger')
-            return redirect(url_for('banks') + '#add-dealer')
+            return redirect(url_for('banks'))
         items=Dealer.query.filter(platform_scope(Dealer)).order_by(Dealer.name).all()
         rows=db.session.execute(select(DealerTrade.dealer_id,DealerTrade.flow,func.sum(DealerTrade.aud_amount),func.sum(DealerTrade.myr_delta)).join(Transaction,Transaction.id==DealerTrade.transaction_id).where(Transaction.status=='confirmed',platform_scope(Transaction)).group_by(DealerTrade.dealer_id,DealerTrade.flow)).all()
         totals={}
