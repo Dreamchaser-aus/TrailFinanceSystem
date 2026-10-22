@@ -7,13 +7,13 @@
 </div>
 <div class="card p-3 p-lg-4">
   <form method="get" action="{{ url_for('transactions') }}">
-    <input type="hidden" name="date" value="{{selected_day.isoformat()}}">
+    
     <div class="mb-3"><input class="form-control" name="search" value="{{ search }}" placeholder="Search customer, transaction ID or bank..." aria-label="Search transactions"></div>
     <div class="d-flex flex-wrap gap-3 mb-3"><span class="fw-semibold">Types:</span>
       {% for value,label in [('deposit','Deposit'),('withdrawal','Withdrawal'),('transfer','Transfer')] %}
       <label class="form-check"><input class="form-check-input" type="checkbox" name="kind" value="{{value}}" {% if value in kinds %}checked{% endif %}><span class="form-check-label">{{label}}</span></label>
       {% endfor %}<span class="text-muted small">None checked = All types</span></div>
-    <div class="row g-2 align-items-center mb-3">
+    <div class="row g-2 align-items-center mb-3"><div class="col-auto"><label class="form-label small mb-0" for="transaction-date-mode">Date range</label><select class="form-select form-select-sm" id="transaction-date-mode" name="all_dates" aria-label="Date range"><option value="1" {% if all_dates %}selected{% endif %}>All Dates</option><option value="0" {% if not all_dates %}selected{% endif %}>Selected Date</option></select></div><div class="col-auto"><label class="form-label small mb-0" for="transaction-report-date">Report date</label><input class="form-control form-control-sm" id="transaction-report-date" type="date" name="date" value="{{selected_day.isoformat()}}" max="{{today_myt}}"></div>
       <div class="col-12 col-sm-6 col-lg-4"><select class="form-select" name="bank_id" aria-label="Filter by bank"><option value="">All Banks</option>{% for b in banks %}<option value="{{ b.id }}" {% if bank_id == b.id %}selected{% endif %}>{{ b.name }}</option>{% endfor %}</select></div>
       <div class="col-auto"><button class="btn btn-primary" type="submit">Apply Filters</button></div>
       <div class="col-auto"><a class="btn btn-outline-secondary" href="{{ url_for('transactions') }}">Reset</a></div>
@@ -43,8 +43,8 @@
   <div class="d-flex justify-content-between align-items-center gap-2">
     <span class="small text-muted">Page {{ records.page }} / {{ records.pages or 1 }}</span>
     <div class="d-flex gap-2">
-      {% if records.has_prev %}<a class="btn btn-sm btn-outline-primary" href="{{ url_for('transactions',page=records.prev_num,search=search,kind=kinds,bank_id=bank_id,date=selected_day.isoformat()) }}">Previous</a>{% endif %}
-      {% if records.has_next %}<a class="btn btn-sm btn-outline-primary" href="{{ url_for('transactions',page=records.next_num,search=search,kind=kinds,bank_id=bank_id,date=selected_day.isoformat()) }}">Next</a>{% endif %}
+      {% if records.has_prev %}<a class="btn btn-sm btn-outline-primary" href="{{ url_for('transactions',page=records.prev_num,search=search,kind=kinds,bank_id=bank_id,date=selected_day.isoformat(),all_dates=1 if all_dates else 0) }}">Previous</a>{% endif %}
+      {% if records.has_next %}<a class="btn btn-sm btn-outline-primary" href="{{ url_for('transactions',page=records.next_num,search=search,kind=kinds,bank_id=bank_id,date=selected_day.isoformat(),all_dates=1 if all_dates else 0) }}">Next</a>{% endif %}
     </div>
   </div>
 </div>
