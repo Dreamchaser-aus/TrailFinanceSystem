@@ -39,7 +39,28 @@
  </div></div>
 </div>
 <div class="row g-3"><div class="col-12">
-{% if can('view_bank_balances') %}<div class="card p-3 mb-3"><div class="d-flex justify-content-between align-items-center mb-2"><h5 class="mb-0">Active Bank Balances</h5><a class="btn btn-sm btn-outline-primary" href="{{url_for('new_transaction')}}">↻ Refresh</a></div><p class="small text-muted mb-2">AUD · Active banks only · confirmed ledger balances. Opening / Daily use today's MYT business date.</p><div style="max-height:370px;overflow:auto">{% set overview_banks=balance_banks %}{% include '_bank_overview.html' %}</div></div>
+{% if can('view_bank_balances') %}<div class="card p-3 mb-3" id="newtx-bank-balances"><div class="d-flex justify-content-between align-items-center mb-2"><h5 class="mb-0">Active Bank Balances</h5><a class="btn btn-sm btn-outline-primary" href="{{url_for('new_transaction')}}">↻ Refresh</a></div><p class="small text-muted mb-2">AUD · Active banks only · confirmed ledger balances. Opening / Daily use today's MYT business date.</p><div style="max-height:370px;overflow:auto">{% set overview_banks=balance_banks %}{% set overview_enable_status_edit=true %}{% include '_bank_overview.html' %}</div></div>
+{% if current_user.role in ('admin','staff') and can('view_bank_balances') %}
+{% for b in balance_banks %}
+<div class="modal fade" id="newtx-bank-status-modal-{{b.id}}" tabindex="-1" aria-labelledby="newtx-bank-status-title-{{b.id}}" aria-hidden="true">
+ <div class="modal-dialog modal-dialog-centered modal-sm"><div class="modal-content">
+  <form method="post" action="{{url_for('update_bank_status',bank_id=b.id)}}">
+   <input type="hidden" name="csrf_token" value="{{csrf_token()}}">
+   <input type="hidden" name="return_to" value="new_transaction">
+   <div class="modal-header"><h6 class="modal-title" id="newtx-bank-status-title-{{b.id}}">Update Bank Status</h6><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button></div>
+   <div class="modal-body">
+    <div class="small fw-semibold mb-2">{{b.name}}</div>
+    <label class="form-label small" for="newtx-status-select-{{b.id}}">Current status</label>
+    <select id="newtx-status-select-{{b.id}}" name="status" class="form-select form-select-sm mb-3" required>{% for value,label in bank_status_options.items() %}<option value="{{value}}" {% if value==b.status %}selected{% endif %}>{{label}}</option>{% endfor %}</select>
+    <label class="form-label small" for="newtx-status-reason-{{b.id}}">Reason (required for any non-Active status)</label>
+    <textarea id="newtx-status-reason-{{b.id}}" name="remark" maxlength="2000" rows="3" class="form-control form-control-sm" placeholder="Describe the issue">{{b.status_remark or ''}}</textarea>
+   </div>
+   <div class="modal-footer"><button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Cancel</button><button type="submit" class="btn btn-sm btn-primary">Save Changes</button></div>
+  </form>
+ </div></div>
+</div>
+{% endfor %}
+{% endif %}
 {% if can('view_bank_movements') %}<div class="card p-3" id="latest-transactions"><div class="d-flex justify-content-between align-items-center mb-2"><h5 class="mb-0">Latest Transactions — Today (Latest 20)</h5>{% if can('view_transactions') %}<a class="btn btn-sm btn-outline-primary" href="{{url_for('transactions',all_dates=1)}}">View All</a>{% endif %}</div><form method="get" action="{{url_for('new_transaction')}}" class="d-flex gap-2 mb-2" id="movement-search-form"><select class="form-select form-select-sm" name="movement_bank" aria-label="Filter bank"><option value="">All banks</option>{% for b in balance_banks %}<option value="{{b.id}}" {{'selected' if movement_bank==b.id else ''}}>{{b.name}}</option>{% endfor %}</select><input type="search" class="form-control form-control-sm" name="movement_search" value="{{movement_search}}" placeholder="Search reference, customer or bank" aria-label="Search latest transactions"><button class="btn btn-sm btn-outline-primary" type="submit">Search</button>{% if movement_search %}<a class="btn btn-sm btn-outline-secondary" href="{{url_for('new_transaction')}}#latest-transactions">Clear</a>{% endif %}</form><div class="table-responsive" style="max-height:370px"><table class="table table-sm"><thead><tr><th>Time</th><th>Bank</th><th>Reference</th><th>Type</th><th class="text-end">AUD</th><th>Action</th></tr></thead><tbody>{% for e,t,name in recent %}<tr class="{{'table-danger' if t.status=='voided' else ''}}"><td class="small">{{t.created_at|mytime}}</td><td>{{name}}</td><td>{{t.reference}}{% if t.status=='voided' %}<span class="badge bg-danger ms-1">DELETED</span>{% endif %}</td><td><span class="badge {{'bg-success' if t.kind=='deposit' else 'bg-warning text-dark' if t.kind in ('withdrawal','dealer_payout') else 'bg-secondary'}}">{{'Deposit' if t.kind=='deposit' else 'Withdrawal' if t.kind in ('withdrawal','dealer_payout') else t.kind|replace('_',' ')|title}}</span></td><td class="text-end money {{'text-danger text-decoration-line-through' if t.status=='voided' else ('text-success' if e.delta>=0 else 'text-danger')}}">{{'+' if e.delta>=0 else ''}}{{e.delta|rm}}</td><td>{% if t.status=='confirmed' and current_user.role in ('admin','staff') and t.business_date.isoformat()==entry_today and t.kind not in ('dealer_sell','dealer_buy','dealer_payout') %}<button type="button" class="btn btn-sm btn-outline-danger" data-bs-toggle="modal" data-bs-target="#newtx-delete-{{t.id}}">Delete</button>{% elif t.status=='voided' %}<span class="badge bg-danger">Deleted</span>{% else %}<span class="text-muted">—</span>{% endif %}</td></tr>{% else %}<tr><td colspan="6">No recent movements</td></tr>{% endfor %}</tbody></table></div></div>{% endif %}{% endif %}</div></div>
 
 
