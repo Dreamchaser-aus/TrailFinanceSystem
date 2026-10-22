@@ -1067,11 +1067,9 @@ def create_app(test_config=None):
             .where(Transaction.created_at >= range_start_utc, Transaction.created_at < range_end_utc, Transaction.status == 'confirmed',platform_scope(Transaction))
             .group_by(Transaction.kind)).all()
         totals = {k: {'count': n, 'amount': money(v)} for k, n, v in rows}
-        # Latest Transactions is always the CURRENT business/closing day, independent of Dashboard report filters.
-        latest_start_utc, latest_scheduled_end_utc = dashboard_utc_window(business_today(), business_today())
-        latest_end_utc = min(latest_scheduled_end_utc, now())
-        latest = (Transaction.query.filter(Transaction.created_at >= latest_start_utc,
-                                           Transaction.created_at < latest_end_utc, platform_scope(Transaction))
+        # Dashboard retains its historical report-date filtering (V7.9.6.11 behavior).
+        latest = (Transaction.query.filter(Transaction.created_at >= range_start_utc,
+                                           Transaction.created_at < range_end_utc, platform_scope(Transaction))
                   .order_by(Transaction.created_at.desc(), Transaction.id.desc()).limit(20).all())
         platform_names = {p.id:p.name for p in Platform.query.filter(Platform.id.in_({t.platform_id for t in latest})).all()} if latest else {}
         void_audits = (TransactionAudit.query.filter(TransactionAudit.transaction_id.in_([t.id for t in latest]),TransactionAudit.action=='VOID').order_by(TransactionAudit.created_at.desc()).all() if latest else [])
@@ -1440,13 +1438,13 @@ def create_app(test_config=None):
                 if movement_search:
                     pattern=f'%{movement_search}%'
                     movement_query=movement_query.where(db.or_(Transaction.reference.ilike(pattern),Transaction.customer_ref.ilike(pattern),Bank.name.ilike(pattern)))
-                movement_count=db.session.scalar(select(func.count()).select_from(movement_query.order_by(None).subquery())) or 0
-                page=max(1,request.args.get('recent_page',1,type=int))
-                per_page=10
-                total_pages=max(1,(movement_count+per_page-1)//per_page)
-                page=min(page,total_pages)
-                recent=db.session.execute(movement_query.offset((page-1)*per_page).limit(per_page)).all()
-                recent_pagination={'page':page,'pages':total_pages,'total':movement_count,'has_prev':page>1,'has_next':page<total_pages}
+                # New Transaction sidebar: only the current closing business day, latest 20 movements.
+                today_start_utc, today_scheduled_end_utc = dashboard_utc_window(business_today(), business_today())
+                movement_query = movement_query.where(
+                    Transaction.created_at >= today_start_utc,
+                    Transaction.created_at < min(today_scheduled_end_utc, now()))
+                recent=db.session.execute(movement_query.limit(20)).all()
+                recent_pagination=None
         return render_template('transaction.html',entry_today=business_today().isoformat(),entry_yesterday=(business_today()-timedelta(days=1)).isoformat(),banks=Bank.query.filter(platform_scope(Bank),Bank.active==True).order_by(Bank.name).all(),dealers=Dealer.query.filter(platform_scope(Dealer),Dealer.active==True).order_by(Dealer.name).all(),balance_banks=balance_banks,balance_values=balance_values,bank_stats=bank_stats,recent=recent,recent_pagination=recent_pagination,movement_search=request.args.get('movement_search','').strip()[:120],movement_bank=request.args.get('movement_bank','').strip()[:36])
 
     @app.get('/banks/<bank_id>/investigation')
