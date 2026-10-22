@@ -44,7 +44,46 @@
 <button type="button" class="btn btn-sm {{'btn-primary' if value=='active' else 'btn-outline-primary'}}" data-newtx-bank-tab="{{value}}" aria-pressed="{{'true' if value=='active' else 'false'}}">{{label}}</button>
 {% endfor %}
 </div>
-<p class="small text-muted mb-2">AUD · Confirmed ledger balances · Opening / Daily use today's MYT business date. Problem Bank excludes Active and Block (Closed).</p><div style="max-height:370px;overflow:auto">{% set overview_banks=balance_banks %}{% set overview_enable_status_edit=true %}{% include '_bank_overview.html' %}</div></div>
+<p class="small text-muted mb-2">AUD · Confirmed ledger balances · Opening / Daily use today's MYT business date. Problem Bank excludes Active and Block (Closed).</p><div style="max-height:370px;overflow:auto">{% set overview_banks=balance_banks %}{% set overview_enable_status_edit=true %}{% set overview_enable_details_modal=true %}{% include '_bank_overview.html' %}</div></div>
+{% if can('view_bank_details') %}
+{% for b in balance_banks %}
+{% set d=bank_details_map.get(b.id) %}
+{% set v=bank_stats[b.id] %}
+<div class="modal fade" id="newtx-bank-details-modal-{{b.id}}" tabindex="-1" aria-labelledby="newtx-bank-details-title-{{b.id}}" aria-hidden="true">
+ <div class="modal-dialog modal-dialog-centered modal-lg modal-dialog-scrollable"><div class="modal-content">
+  <div class="modal-header"><h5 class="modal-title" id="newtx-bank-details-title-{{b.id}}">Bank Details · {{b.name}}</h5><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button></div>
+  <div class="modal-body">
+   <h6>Bank Overview</h6>
+   <dl class="row mb-3">
+    <dt class="col-sm-4">Bank Name</dt><dd class="col-sm-8">{{b.name}}</dd>
+    <dt class="col-sm-4">Group</dt><dd class="col-sm-8">{{b.kind|title}}</dd>
+    <dt class="col-sm-4">Status</dt><dd class="col-sm-8">{{bank_status_options.get(b.status,b.status)}}{% if not b.active %} · Inactive{% endif %}</dd>
+    <dt class="col-sm-4">Status Remark</dt><dd class="col-sm-8 text-break">{{b.status_remark or '—'}}</dd>
+    <dt class="col-sm-4">Opening</dt><dd class="col-sm-8">AUD {{v.opening|rm}}</dd>
+    <dt class="col-sm-4">Daily</dt><dd class="col-sm-8">AUD {{v.daily|rm}}</dd>
+    <dt class="col-sm-4">Current Balance</dt><dd class="col-sm-8 fw-semibold">AUD {{v.current|rm}}</dd>
+    <dt class="col-sm-4">IN / OUT</dt><dd class="col-sm-8">{{v.in_count}} ({{v.in_amount|rm}}) / {{v.out_count}} ({{v.out_amount|rm}})</dd>
+    <dt class="col-sm-4">Created At</dt><dd class="col-sm-8">{{b.created_at|mytime if b.created_at else '—'}}</dd>
+    <dt class="col-sm-4">Status Updated</dt><dd class="col-sm-8">{{b.status_updated_at|mytime if b.status_updated_at else '—'}}</dd>
+   </dl>
+   <h6>Account Information</h6>
+   <dl class="row mb-0">
+   {% for label,value in [('PayID',d.payid if d else None),('BSB Number',d.bsb_number if d else None),('Account Number',d.account_number if d else None),('Phone Number',d.phone_number if d else None),('Date of Birth',d.date_of_birth if d else None),('Card Last 4',d.card_details[-4:] if d and d.card_details else None),('Expiry Date',d.expiry_date if d else None),('Login ID',d.login_id if d else None),('OTP API Link',d.otp_api_link if d else None),('Remark',d.remark if d else None)] %}
+    <dt class="col-sm-4">{{label}}</dt><dd class="col-sm-8 text-break">{{value or '—'}}</dd>
+   {% endfor %}
+   <dt class="col-sm-4">Login Password</dt><dd class="col-sm-8">
+   {% if can('view_sensitive_bank_details') %}
+   <div class="d-flex flex-wrap gap-2 align-items-center"><input class="form-control form-control-sm" style="max-width:290px" type="password" readonly autocomplete="off" aria-label="Bank login password" id="newtx-password-{{b.id}}" placeholder="Click Reveal to view"><button type="button" class="btn btn-sm btn-outline-warning newtx-reveal-password" data-url="{{url_for('reveal_bank_password',bank_id=b.id)}}" data-target="newtx-password-{{b.id}}">Reveal Password</button><button type="button" class="btn btn-sm btn-outline-secondary newtx-toggle-password" data-target="newtx-password-{{b.id}}" hidden>Hide</button></div>
+   <small class="text-muted">Password access is audited. Do not share credentials.</small>
+   {% else %}<span class="text-muted">Restricted · insufficient permission</span>{% endif %}
+   </dd>
+   </dl>
+  </div>
+  <div class="modal-footer">{% if can('view_bank_details') %}<a href="{{url_for('bank_details',bank_id=b.id)}}" class="btn btn-outline-primary">Open Bank Details</a>{% endif %}<button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button></div>
+ </div></div>
+</div>
+{% endfor %}
+{% endif %}
 {% if current_user.role in ('admin','staff') and can('view_bank_balances') %}
 {% for b in balance_banks %}
 <div class="modal fade" id="newtx-bank-status-modal-{{b.id}}" tabindex="-1" aria-labelledby="newtx-bank-status-title-{{b.id}}" aria-hidden="true">
@@ -190,5 +229,23 @@
   tabs.forEach(tab => tab.addEventListener('click', () => apply(tab.dataset.newtxBankTab)));
   apply('active');
 })();
+</script>
+<script>
+document.addEventListener('click', async function(event) {
+ const reveal=event.target.closest('.newtx-reveal-password');
+ const toggle=event.target.closest('.newtx-toggle-password');
+ if(toggle){const input=document.getElementById(toggle.dataset.target);if(input){input.type=input.type==='password'?'text':'password';toggle.textContent=input.type==='password'?'Show':'Hide';}return;}
+ if(!reveal)return;
+ const input=document.getElementById(reveal.dataset.target);if(!input)return;
+ reveal.disabled=true;
+ try {
+  const response=await fetch(reveal.dataset.url,{method:'POST',credentials:'same-origin',headers:{'X-CSRFToken':{{ csrf_token()|tojson }},'Accept':'application/json'},cache:'no-store'});
+  if(!response.ok)throw new Error('Password access denied or unavailable ('+response.status+')');
+  const data=await response.json();input.value=data.password||'';input.type='text';
+  const toggleButton=document.querySelector('.newtx-toggle-password[data-target="'+reveal.dataset.target+'"]');if(toggleButton){toggleButton.hidden=false;toggleButton.textContent='Hide';}
+  reveal.textContent='Reveal Again';
+ }catch(error){alert(error.message);}finally{reveal.disabled=false;}
+});
+document.addEventListener('hidden.bs.modal',function(event){const input=event.target.querySelector('input[id^="newtx-password-"]');if(input){input.value='';input.type='password';const toggle=event.target.querySelector('.newtx-toggle-password');if(toggle){toggle.hidden=true;toggle.textContent='Hide';}}});
 </script>
 {% endblock %}
