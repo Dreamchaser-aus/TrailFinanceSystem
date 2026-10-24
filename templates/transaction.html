@@ -4,7 +4,7 @@
   <div><h3 class="mb-1">New Transaction</h3><div class="text-muted">Record transactions and review updated bank balances in one place</div></div>
   <div class="d-flex gap-2"><button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#newTransactionEntryModal">+ Add Transaction</button></div>
 </div>
-<div class="modal fade" id="newTransactionEntryModal" tabindex="-1" aria-labelledby="newTransactionEntryTitle" aria-hidden="true">
+<div class="modal fade" id="newTransactionEntryModal" data-bs-backdrop="static" data-bs-keyboard="false" tabindex="-1" aria-labelledby="newTransactionEntryTitle" aria-hidden="true">
  <div class="modal-dialog modal-dialog-centered modal-lg modal-dialog-scrollable"><div class="modal-content">
  <div class="modal-header"><h5 class="modal-title" id="newTransactionEntryTitle">Add New Transaction</h5><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button></div>
  <div class="modal-body">
@@ -130,13 +130,6 @@
 {% endif %}
 {% endfor %}
 
-<div class="modal fade" id="transactionConfirmModal" tabindex="-1" aria-labelledby="transactionConfirmTitle" aria-hidden="true">
-  <div class="modal-dialog modal-dialog-centered"><div class="modal-content">
-    <div class="modal-header"><h5 class="modal-title" id="transactionConfirmTitle">Confirm New Transaction</h5><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button></div>
-    <div class="modal-body"><p class="text-muted small">Please check every detail before posting. The transaction will be saved only after you confirm.</p><dl class="row mb-0" id="transactionConfirmDetails"></dl></div>
-    <div class="modal-footer"><button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Back to Edit</button><button type="button" class="btn btn-primary" id="confirmPostBtn">Confirm &amp; Post</button></div>
-  </div></div>
-</div>
 <script>
 // Install the no-navigation guard before the transaction UI controller.
 (function(){
@@ -186,29 +179,8 @@ document.addEventListener('DOMContentLoaded', function () {
   }
   [kind,amount,rate].forEach(el=>el.addEventListener('input',refresh));
   const form=get('newTransactionForm');
-  const confirmModal=new bootstrap.Modal(get('transactionConfirmModal'));
   let posting=false;
-  function selectedText(el){return el && el.selectedIndex>=0 ? el.options[el.selectedIndex].text : '—';}
-  function showReview(){
-    const fields=[
-      ['Transaction Date',selectedText(get('business_date'))],
-      ['Transaction Type',selectedText(kind)],
-      ['Transaction ID',needsCustomerReference(kind.value)?get('reference').value.trim():'Automatically generated on confirmation'],
-      ['Amount (AUD)',money(Number(amount.value))],
-      ['Bank',kind.value==='dealer_payout'?'Not applicable':selectedText(bank)],
-      ['Destination Bank',['transfer','internal_transfer'].includes(kind.value)?selectedText(toBank):null],
-      ['Dealer',dealerKinds.includes(kind.value)?selectedText(dealer):null],
-      ['Exchange Rate',dealerKinds.includes(kind.value)?get('rate').value:null],
-      ['Customer ID',['deposit','withdrawal','dealer_payout'].includes(kind.value)?customer.value.trim()||'—':null],
-      ['Remark',get('remark').value.trim()||'—']
-    ];
-    const dl=get('transactionConfirmDetails');dl.replaceChildren();
-    for(const [label,value] of fields){if(value===null)continue;
-      const dt=document.createElement('dt');dt.className='col-5 small';dt.textContent=label;
-      const dd=document.createElement('dd');dd.className='col-7 text-break';dd.textContent=value;
-      dl.append(dt,dd);
-    }
-  }
+  // One-step posting: review validates the reference and immediately posts.
   let checkingReference=false;
   form.addEventListener('submit',async function(e){
     e.preventDefault();
@@ -249,41 +221,38 @@ document.addEventListener('DOMContentLoaded', function () {
         reviewButton.textContent=oldLabel;
       }
     }
-    // Only open the confirmation modal after the ID has passed the preflight check.
-    showReview();
-    bootstrap.Modal.getOrCreateInstance(get('newTransactionEntryModal')).hide();
-    get('newTransactionEntryModal').addEventListener('hidden.bs.modal',function onEntryHidden(){
-      this.removeEventListener('hidden.bs.modal',onEntryHidden);
-      confirmModal.show();
-    },{once:true});
-  });
-  get('transactionConfirmModal').addEventListener('hidden.bs.modal',function(){if(!posting)bootstrap.Modal.getOrCreateInstance(get('newTransactionEntryModal')).show();});
-  get('confirmPostBtn').addEventListener('click',function(){
-    if(posting)return;
-    if(!form.reportValidity()) {confirmModal.hide();return;}
-    if(['transfer','internal_transfer'].includes(kind.value)&&bank.value===toBank.value){confirmModal.hide();alert('Choose two different bank accounts');return;}
+    // Keep the entry modal open throughout validation and posting.
     posting=true;
-    const button=this;
-    button.disabled=true;button.textContent='Posting...';get('submitBtn').disabled=true;
-    clearReferenceError();get('transactionEntryError').classList.add('d-none');
-    fetch(form.action||window.location.href,{method:'POST',body:new FormData(form),headers:{'Accept':'application/json'},credentials:'same-origin'})
-      .then(async response=>{
-        const data=await response.json();
-        if(!response.ok||!data.ok){throw data;}
-        window.location.assign(data.redirect||window.location.href);
-      })
-      .catch(error=>{
-        posting=false;button.disabled=false;button.textContent='Confirm & Post';get('submitBtn').disabled=false;
-        const message=error?.error||'Unable to submit transaction. Please try again.';
-        const duplicate=error?.field==='reference';
-        if(duplicate){reference.classList.add('is-invalid');get('referenceError').textContent=message;}
-        else {get('transactionEntryError').textContent=message;get('transactionEntryError').classList.remove('d-none');}
-        confirmModal.hide();
-        get('newTransactionEntryModal').addEventListener('shown.bs.modal',function onShown(){
-          this.removeEventListener('shown.bs.modal',onShown);
-          if(duplicate)reference.focus();
-        },{once:true});
+    const button=get('submitBtn');
+    button.disabled=true;
+    const oldText=button.textContent;
+    button.textContent='Posting...';
+    try {
+      const response=await fetch(form.action||window.location.href,{
+        method:'POST',body:new FormData(form),
+        headers:{'Accept':'application/json'},credentials:'same-origin'
       });
+      const contentType=response.headers.get('content-type')||'';
+      if(!contentType.includes('application/json'))throw new Error('Unexpected server response. Please refresh and try again.');
+      const data=await response.json();
+      if(!response.ok||!data.ok){
+        if(data.field==='reference'){
+          reference.classList.add('is-invalid');
+          get('referenceError').textContent='Duplicate Transaction ID';
+          reference.focus();
+        }else{
+          get('transactionEntryError').textContent=data.error||'Unable to post transaction.';
+          get('transactionEntryError').classList.remove('d-none');
+        }
+        return;
+      }
+      window.location.assign(data.redirect||window.location.href);
+    }catch(error){
+      get('transactionEntryError').textContent=error.message||'Unable to post transaction. Please try again.';
+      get('transactionEntryError').classList.remove('d-none');
+    }finally{
+      posting=false;button.disabled=false;button.textContent=oldText;
+    }
   });
   updateReference();refresh();
 });
