@@ -1409,6 +1409,27 @@ def create_app(test_config=None):
             d[flow]+=aud;d['myr']+=myr
         return render_template('dealers.html',dealers=items,totals=totals)
 
+    @app.post('/transactions/check-reference')
+    @login_required
+    def check_transaction_reference():
+        # This is a preflight UX check only. The final POST still enforces uniqueness.
+        require_permission('create_transaction')
+        pid=require_single_platform()
+        kind=(request.form.get('kind') or '').strip()
+        reference=(request.form.get('reference') or '').strip()
+        if kind not in ('deposit','withdrawal','dealer_payout'):
+            return app.json.response({'ok':True,'duplicate':False})
+        if not reference:
+            response=app.json.response({'ok':False,'duplicate':False,'error':'Platform Transaction ID is required.'})
+            response.status_code=400
+            response.headers['Cache-Control']='no-store'
+            return response
+        # Match the existing global uniqueness rule used by record/record_dealer.
+        exists=db.session.execute(select(Transaction.id).where(Transaction.reference==reference).limit(1)).first() is not None
+        response=app.json.response({'ok':not exists,'duplicate':exists,'error':'Duplicate Transaction ID' if exists else ''})
+        response.headers['Cache-Control']='no-store'
+        return response
+
     @app.route('/transactions/new',methods=['GET','POST'])
     @login_required
     def new_transaction():
