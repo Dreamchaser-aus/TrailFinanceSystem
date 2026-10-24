@@ -645,7 +645,12 @@ def lock_banks(ids):
     return db.session.execute(select(Bank).where(Bank.id.in_(sorted(set(ids)))).order_by(Bank.id).with_for_update()).scalars().all()
 
 def record(kind,reference,amount,bank_id,user_id,customer_ref='',remark='',to_bank_id=None,platform_id=None,business_day=None):
-    if not reference.strip(): raise ValueError('Transaction ID required')
+    # Legacy internal transfers use the same double-entry ledger as ordinary bank transfers.
+    if kind=='internal_transfer': kind='transfer'
+    reference=(reference or '').strip()
+    if not reference and kind not in ('deposit','withdrawal'):
+        reference='BF-'+uuid.uuid4().hex[:20].upper()
+    if not reference: raise ValueError('Transaction ID required')
     if kind not in ('deposit','withdrawal','transfer','cash_in','cash_out','internal_transfer'): raise ValueError('Unsupported type')
     if not platform_id: raise ValueError("Select platform")
     a=amount_positive(amount); ids=[bank_id]+([to_bank_id] if to_bank_id else [])
@@ -690,7 +695,9 @@ def record_dealer(kind, reference, amount, bank_id, user_id, dealer_id, rate, cu
     if not platform_id: raise ValueError('Select platform')
     if kind not in ('dealer_sell','dealer_buy','dealer_payout'):
         raise ValueError('Unsupported dealer transaction')
-    reference=reference.strip()
+    reference=(reference or '').strip()
+    if not reference and kind not in ('dealer_payout',):
+        reference='BF-'+uuid.uuid4().hex[:20].upper()
     if not reference: raise ValueError('Transaction ID required')
     aud=amount_positive(amount)
     try: fx=Decimal(str(rate))
