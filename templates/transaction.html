@@ -8,7 +8,7 @@
  <div class="modal-dialog modal-dialog-centered modal-lg modal-dialog-scrollable"><div class="modal-content">
  <div class="modal-header"><h5 class="modal-title" id="newTransactionEntryTitle">Add New Transaction</h5><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button></div>
  <div class="modal-body">
-  <form method="post" id="newTransactionForm"><div class="alert alert-danger d-none" id="transactionEntryError" role="alert"></div>
+  <form method="post" id="newTransactionForm" onsubmit="return false"><div class="alert alert-danger d-none" id="transactionEntryError" role="alert"></div>
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <div class="row g-3">
       <div class="col-12 col-md-6"><label class="form-label fw-semibold" for="business_date">Transaction Date (MYT)</label><select class="form-select" id="business_date" name="business_date" required><option value="{{entry_today}}">Today — {{entry_today}}</option><option value="{{entry_yesterday}}">Yesterday — {{entry_yesterday}}</option></select><div class="form-text">Only today or yesterday. Actual creation time is always recorded separately.</div></div>
@@ -138,6 +138,11 @@
   </div></div>
 </div>
 <script>
+// Install the no-navigation guard before the transaction UI controller.
+(function(){
+  const form=document.getElementById('newTransactionForm');
+  if(form)form.addEventListener('submit',function(e){e.preventDefault();});
+})();
 (function () {
   const get = id => document.getElementById(id);
   const kind=get('kind'), amount=get('amount'), rate=get('rate'), bank=get('bank_id'), toBank=get('to_bank_id'), dealer=get('dealer_id'), customer=get('customer_ref');
@@ -341,4 +346,28 @@ document.addEventListener('click', async function(event) {
 });
 document.addEventListener('hidden.bs.modal',function(event){const input=event.target.querySelector('input[id^="newtx-password-"]');if(input){input.value='';input.type='password';const copy=event.target.querySelector('.newtx-copy-field[data-target="'+input.id+'"]');if(copy){copy.disabled=true;copy.textContent='Copy';}const toggle=event.target.querySelector('.newtx-toggle-password');if(toggle){toggle.hidden=true;toggle.textContent='Hide';}}});
 </script>
+
+{% if duplicate_form_state %}
+<script>
+document.addEventListener('DOMContentLoaded',function(){
+  const values={{ duplicate_form_state|tojson }};
+  const form=document.getElementById('newTransactionForm');
+  if(!form)return;
+  const kind=form.elements.namedItem('kind');
+  if(kind && values.kind){kind.value=values.kind;kind.dispatchEvent(new Event('change',{bubbles:true}));}
+  for(const [key,value] of Object.entries(values)){
+    if(key==='csrf_token'||key==='kind')continue;
+    const field=form.elements.namedItem(key);
+    if(field && typeof field.value==='string')field.value=value;
+  }
+  for(const field of ['amount','rate']){const el=form.elements.namedItem(field);if(el)el.dispatchEvent(new Event('input',{bubbles:true}));}
+  const reference=form.elements.namedItem('reference');
+  reference.classList.add('is-invalid');
+  document.getElementById('referenceError').textContent='Duplicate Transaction ID';
+  const modal=document.getElementById('newTransactionEntryModal');
+  bootstrap.Modal.getOrCreateInstance(modal).show();
+  modal.addEventListener('shown.bs.modal',()=>reference.focus(),{once:true});
+});
+</script>
+{% endif %}
 {% endblock %}
