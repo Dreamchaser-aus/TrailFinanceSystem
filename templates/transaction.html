@@ -143,7 +143,7 @@
   const form=document.getElementById('newTransactionForm');
   if(form)form.addEventListener('submit',function(e){e.preventDefault();});
 })();
-(function () {
+document.addEventListener('DOMContentLoaded', function () {
   const get = id => document.getElementById(id);
   const kind=get('kind'), amount=get('amount'), rate=get('rate'), bank=get('bank_id'), toBank=get('to_bank_id'), dealer=get('dealer_id'), customer=get('customer_ref');
   const dealerKinds=['dealer_sell','dealer_buy','dealer_payout'];
@@ -286,7 +286,7 @@
       });
   });
   updateReference();refresh();
-})();
+});
 </script>
 <script>
 (function () {
