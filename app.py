@@ -1459,7 +1459,13 @@ def create_app(test_config=None):
                     response.status_code=409 if duplicate else 400
                     response.headers['Cache-Control']='no-store'
                     return response
-                flash(str(e),'danger')
+                message=str(e)
+                duplicate=('duplicate' in message.lower() or ('unique' in message.lower() and 'reference' in message.lower()))
+                if duplicate and (request.form.get('kind') or '') in ('deposit','withdrawal','dealer_payout'):
+                    # No redirect/flash: re-render below, restoring all inputs and opening the entry modal.
+                    g.duplicate_transaction_form_state={k:v for k,v in request.form.items() if k!='csrf_token'}
+                else:
+                    flash(message,'danger')
         
         balance_banks=[];balance_values={};bank_stats={};recent=[];recent_pagination=None
         if permitted('view_bank_balances'):
@@ -1487,7 +1493,7 @@ def create_app(test_config=None):
                     Transaction.created_at < min(today_scheduled_end_utc, now()))
                 recent=db.session.execute(movement_query.limit(20)).all()
                 recent_pagination=None
-        return render_template('transaction.html',entry_today=business_today().isoformat(),entry_yesterday=(business_today()-timedelta(days=1)).isoformat(),banks=Bank.query.filter(platform_scope(Bank),Bank.active==True).order_by(Bank.name).all(),dealers=Dealer.query.filter(platform_scope(Dealer),Dealer.active==True).order_by(Dealer.name).all(),balance_banks=balance_banks,balance_values=balance_values,bank_stats=bank_stats,recent=recent,recent_pagination=recent_pagination,bank_status_options=BANK_STATUSES,bank_details_map={d.bank_id:d for d in BankDetail.query.filter(BankDetail.bank_id.in_([b.id for b in balance_banks])).all()} if permitted('view_bank_details') and balance_banks else {},movement_search=request.args.get('movement_search','').strip()[:120],movement_bank=request.args.get('movement_bank','').strip()[:36])
+        return render_template('transaction.html',entry_today=business_today().isoformat(),entry_yesterday=(business_today()-timedelta(days=1)).isoformat(),banks=Bank.query.filter(platform_scope(Bank),Bank.active==True).order_by(Bank.name).all(),dealers=Dealer.query.filter(platform_scope(Dealer),Dealer.active==True).order_by(Dealer.name).all(),balance_banks=balance_banks,balance_values=balance_values,bank_stats=bank_stats,recent=recent,recent_pagination=recent_pagination,bank_status_options=BANK_STATUSES,bank_details_map={d.bank_id:d for d in BankDetail.query.filter(BankDetail.bank_id.in_([b.id for b in balance_banks])).all()} if permitted('view_bank_details') and balance_banks else {},movement_search=request.args.get('movement_search','').strip()[:120],movement_bank=request.args.get('movement_bank','').strip()[:36],duplicate_form_state=getattr(g,'duplicate_transaction_form_state',None))
 
     @app.get('/banks/<bank_id>/investigation')
     @login_required
