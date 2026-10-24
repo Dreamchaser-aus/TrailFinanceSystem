@@ -1424,8 +1424,21 @@ def create_app(test_config=None):
                                   request.form.get('customer_ref',''),request.form.get('remark',''),platform_id=pid,business_day=chosen_day)
                 else:
                     record(kind,request.form.get('reference',''),request.form.get('amount',''),request.form.get('bank_id',''),current_user.id,request.form.get('customer_ref',''),request.form.get('remark',''),request.form.get('to_bank_id') or None,platform_id=pid,business_day=chosen_day)
+                if request.accept_mimetypes.best == 'application/json':
+                    response=app.json.response({'ok':True,'redirect':url_for('new_transaction')})
+                    response.headers['Cache-Control']='no-store'
+                    return response
                 flash('Transaction confirmed and balance updated','success');return redirect(url_for('new_transaction'))
-            except (ValueError,IntegrityError) as e: db.session.rollback();flash(str(e),'danger')
+            except (ValueError,IntegrityError) as e:
+                db.session.rollback()
+                if request.accept_mimetypes.best == 'application/json':
+                    message=str(e)
+                    duplicate=('duplicate' in message.lower() or ('unique' in message.lower() and 'reference' in message.lower()))
+                    response=app.json.response({'ok':False,'field':'reference' if duplicate else None,'error':'This platform Transaction ID already exists. Please enter a different ID.' if duplicate else message})
+                    response.status_code=409 if duplicate else 400
+                    response.headers['Cache-Control']='no-store'
+                    return response
+                flash(str(e),'danger')
         
         balance_banks=[];balance_values={};bank_stats={};recent=[];recent_pagination=None
         if permitted('view_bank_balances'):
