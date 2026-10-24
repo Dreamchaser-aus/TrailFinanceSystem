@@ -1699,6 +1699,22 @@ def create_app(test_config=None):
         if reference:q=q.filter(Transaction.reference.ilike(f'%{reference}%'))
         if action in ('CREATE','EDIT','VOID'):q=q.filter(TransactionAudit.action==action)
         if actor:q=q.join(User,User.id==TransactionAudit.actor_id).filter(User.username.ilike(f'%{actor}%'))
+        # Audit filters use Malaysia-local calendar dates, independent of Closing business dates.
+        from_date=request.args.get('from_date','').strip()
+        to_date=request.args.get('to_date','').strip()
+        try:
+            start_day=date.fromisoformat(from_date) if from_date else None
+            end_day=date.fromisoformat(to_date) if to_date else None
+            if start_day and end_day and start_day>end_day: raise ValueError('Date range reversed')
+        except ValueError:
+            abort(400, description='Invalid audit date range')
+        start_utc=datetime.combine(start_day,time.min,MYT).astimezone(timezone.utc) if start_day else None
+        end_utc=datetime.combine(end_day+timedelta(days=1),time.min,MYT).astimezone(timezone.utc) if end_day else None
+        def audit_date_filter(query, column):
+            if start_utc is not None: query=query.filter(column>=start_utc)
+            if end_utc is not None: query=query.filter(column<end_utc)
+            return query
+        q=audit_date_filter(q,TransactionAudit.created_at)
         page=max(1,request.args.get('page',1,type=int))
         logs=q.order_by(TransactionAudit.created_at.desc(),TransactionAudit.id.desc()).paginate(page=page,per_page=25,error_out=False)
         category=request.args.get('category','transactions').strip()
@@ -1707,16 +1723,18 @@ def create_app(test_config=None):
         if category=='bank_status':
             bank_q=BankStatusHistory.query.join(Bank,Bank.id==BankStatusHistory.bank_id).filter(platform_scope(Bank))
             if actor:bank_q=bank_q.join(User,User.id==BankStatusHistory.actor_id).filter(User.username.ilike(f'%{actor}%'))
+            bank_q=audit_date_filter(bank_q,BankStatusHistory.created_at)
             bank_logs=bank_q.order_by(BankStatusHistory.created_at.desc(),BankStatusHistory.id.desc()).paginate(page=page,per_page=25,error_out=False)
         elif category=='staff':
             # Account management events are separate from bank status and transaction history.
             # General Audit has no platform_id: restrict these records to administrators.
             if current_user.role!='admin':abort(403)
             staff_q=Audit.query.filter(db.or_(Audit.action.ilike('%STAFF%'),Audit.action.ilike('%USER%'),Audit.action.ilike('%PERMISSION%')))
+            staff_q=audit_date_filter(staff_q,Audit.created_at)
             staff_logs=staff_q.order_by(Audit.created_at.desc(),Audit.id.desc()).paginate(page=page,per_page=25,error_out=False)
         elif category!='transactions':
             category='transactions'
-        return render_template('transaction_audit.html',logs=logs,reference=reference,action=action,actor=actor,category=category,bank_logs=bank_logs,staff_logs=staff_logs,statuses=BANK_STATUSES)
+        return render_template('transaction_audit.html',logs=logs,reference=reference,action=action,actor=actor,category=category,bank_logs=bank_logs,staff_logs=staff_logs,statuses=BANK_STATUSES,from_date=from_date,to_date=to_date)
 
     @app.get('/audit/transactions/<audit_id>')
     @login_required
