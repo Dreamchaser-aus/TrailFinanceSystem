@@ -24,7 +24,7 @@
           <option value="cash_out">Cash Out — External AUD Paid</option>
         </select>
       </div>
-      <div class="col-12 col-md-6"><label class="form-label fw-semibold" for="reference">Transaction ID / Reference</label><div class="input-group"><input class="form-control" id="reference" name="reference" maxlength="120" required placeholder="Unique reference"><button class="btn btn-outline-secondary" type="button" id="generateReferenceBtn" title="Generate another unique system reference">Generate</button></div><div class="form-text" id="referenceHelp">Customer transactions: enter the original transaction ID.</div></div>
+      <div class="col-12 col-md-6"><label class="form-label fw-semibold" for="reference">Transaction ID / Reference</label><input class="form-control" id="reference" name="reference" maxlength="120" required placeholder="Enter platform transaction ID"><div class="form-text" id="referenceHelp">Customer transactions: enter the original transaction ID.</div></div>
       <div class="col-12 col-md-6"><label class="form-label fw-semibold" for="amount">Amount (AUD)</label><input class="form-control" type="number" inputmode="decimal" id="amount" name="amount" min="0.01" step="0.01" required></div>
       <div class="col-12 col-md-6" id="bankBlock"><label class="form-label fw-semibold" id="bankLabel" for="bank_id">Receiving Bank</label><select class="form-select" id="bank_id" name="bank_id"><option value="">Select bank</option>{% for bank in banks %}<option value="{{ bank.id }}">{{ bank.name }}</option>{% endfor %}</select></div>
       <div class="col-12 col-md-6 d-none" id="toBankBlock"><label class="form-label fw-semibold" for="to_bank_id">Destination Bank</label><select class="form-select" id="to_bank_id" name="to_bank_id"><option value="">Select destination</option>{% for bank in banks %}<option value="{{ bank.id }}">{{ bank.name }}</option>{% endfor %}</select></div>
@@ -142,20 +142,18 @@
   const get = id => document.getElementById(id);
   const kind=get('kind'), amount=get('amount'), rate=get('rate'), bank=get('bank_id'), toBank=get('to_bank_id'), dealer=get('dealer_id'), customer=get('customer_ref');
   const dealerKinds=['dealer_sell','dealer_buy','dealer_payout'];
-  const reference=get('reference'), generateBtn=get('generateReferenceBtn');
+  const reference=get('reference');
   const needsCustomerReference=k=>['deposit','withdrawal','dealer_payout'].includes(k);
-  const generateReference=()=> 'BF-'+(window.crypto && crypto.randomUUID ? crypto.randomUUID().replace(/-/g,'').slice(0,20).toUpperCase() : Array.from({length:20},()=>Math.floor(Math.random()*16).toString(16)).join('').toUpperCase());
-  let lastAutoReference='';
   function updateReference(){
     const manual=needsCustomerReference(kind.value);
-    generateBtn.classList.toggle('d-none',manual);
-    get('referenceHelp').textContent=manual?'Enter the original customer/bank transaction ID.':'A unique system transaction ID is generated automatically; you may replace it with an external reference.';
-    if(!manual && (!reference.value.trim() || reference.value===lastAutoReference)){
-      lastAutoReference=generateReference();reference.value=lastAutoReference;
-    } else if(manual && reference.value===lastAutoReference){reference.value='';lastAutoReference='';}
-    reference.placeholder=manual?'Enter customer transaction ID':'Auto-generated system ID';
+    reference.readOnly=!manual;
+    reference.required=manual;
+    reference.value='';
+    reference.placeholder=manual?'Enter platform transaction ID':'Automatically assigned after confirmation';
+    get('referenceHelp').textContent=manual
+      ? 'Required: enter the unique transaction ID from your platform.'
+      : 'BankFlow automatically generates a unique transaction ID when saved. It cannot be edited.';
   }
-  generateBtn.addEventListener('click',()=>{lastAutoReference=generateReference();reference.value=lastAutoReference;});
   kind.addEventListener('change',updateReference);
   const money = n => Number.isFinite(n) ? n.toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2}) : '0.00';
   function refresh() {
@@ -188,7 +186,7 @@
     const fields=[
       ['Transaction Date',selectedText(get('business_date'))],
       ['Transaction Type',selectedText(kind)],
-      ['Reference',get('reference').value.trim()],
+      ['Transaction ID',needsCustomerReference(kind.value)?get('reference').value.trim():'Automatically generated on confirmation'],
       ['Amount (AUD)',money(Number(amount.value))],
       ['Bank',kind.value==='dealer_payout'?'Not applicable':selectedText(bank)],
       ['Destination Bank',['transfer','internal_transfer'].includes(kind.value)?selectedText(toBank):null],
