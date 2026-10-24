@@ -646,11 +646,11 @@ def lock_banks(ids):
 
 def record(kind,reference,amount,bank_id,user_id,customer_ref='',remark='',to_bank_id=None,platform_id=None,business_day=None):
     if not reference.strip(): raise ValueError('Transaction ID required')
-    if kind not in ('deposit','withdrawal','transfer'): raise ValueError('Unsupported type')
+    if kind not in ('deposit','withdrawal','transfer','cash_in','cash_out','internal_transfer'): raise ValueError('Unsupported type')
     if not platform_id: raise ValueError("Select platform")
     a=amount_positive(amount); ids=[bank_id]+([to_bank_id] if to_bank_id else [])
-    if kind=='transfer' and (not to_bank_id or to_bank_id==bank_id): raise ValueError('Choose two different banks')
-    if kind!='transfer' and to_bank_id: raise ValueError('Unexpected destination bank')
+    if kind in ('transfer','internal_transfer') and (not to_bank_id or to_bank_id==bank_id): raise ValueError('Choose two different banks')
+    if kind not in ('transfer','internal_transfer') and to_bank_id: raise ValueError('Unexpected destination bank')
     day=validate_entry_business_day(business_day)
     try:
         bs=lock_banks(ids)
@@ -661,9 +661,9 @@ def record(kind,reference,amount,bank_id,user_id,customer_ref='',remark='',to_ba
             is_source = b.id == bank_id
             if b.status == 'active':
                 continue
-            if b.status == 'cannot_transfer' and not is_source and kind == 'transfer':
+            if b.status == 'cannot_transfer' and not is_source and kind in ('transfer','internal_transfer'):
                 continue
-            if b.status == 'cannot_transfer' and is_source and kind == 'deposit':
+            if b.status == 'cannot_transfer' and is_source and kind in ('deposit','cash_in'):
                 continue
             raise ValueError(f'Bank {b.name} status is {BANK_STATUSES.get(b.status,b.status)}; this transaction is not permitted')
         check_open_day(day,ids)
@@ -672,12 +672,12 @@ def record(kind,reference,amount,bank_id,user_id,customer_ref='',remark='',to_ba
             if last and now() < (last.end_utc if last.end_utc.tzinfo else last.end_utc.replace(tzinfo=timezone.utc)):
                 raise ValueError('Transaction timestamp precedes last finalized closing boundary')
         if Transaction.query.filter_by(reference=reference.strip()).first(): raise ValueError('Duplicate Transaction ID')
-        delta=a if kind=='deposit' else -a
+        delta=a if kind in ('deposit','cash_in') else -a
         if delta<0 and ledger_balance(bank_id)<a: raise ValueError('Insufficient balance (negative balances blocked for new debits)')
         t=Transaction(platform_id=platform_id,reference=reference.strip(),kind=kind,signed_amount=delta,customer_ref=customer_ref.strip() or None,remark=remark.strip(),created_by=user_id,business_date=day)
         db.session.add(t);db.session.flush()
         db.session.add(Entry(transaction_id=t.id,bank_id=bank_id,delta=delta))
-        if kind=='transfer': db.session.add(Entry(transaction_id=t.id,bank_id=to_bank_id,delta=a))
+        if kind in ('transfer','internal_transfer'): db.session.add(Entry(transaction_id=t.id,bank_id=to_bank_id,delta=a))
         db.session.flush()
         write_transaction_audit(t,user_id,'CREATE',after=transaction_snapshot(t))
         db.session.add(Audit(actor_id=user_id,action='CREATE_TRANSACTION',detail=f'{t.id} {kind} {reference}'))
@@ -1090,7 +1090,7 @@ def create_app(test_config=None):
                 grouped.setdefault(tid, []).append((delta, name))
             for t in latest:
                 items = grouped.get(t.id, [])
-                if t.kind == 'transfer':
+                if t.kind in ('transfer','internal_transfer'):
                     source = next((name for delta, name in items if delta < 0), 'Unknown')
                     dest = next((name for delta, name in items if delta > 0), 'Unknown')
                     transaction_banks[t.id] = f'{source} → {dest}'
@@ -1627,7 +1627,7 @@ def create_app(test_config=None):
             q = q.filter(Transaction.business_date == day)
         search = request.args.get('search', '').strip()
         kinds = [v for v in request.args.getlist('kind')
-                 if v in ('deposit', 'withdrawal', 'transfer','dealer_sell','dealer_buy','dealer_payout')]
+                 if v in ('deposit', 'withdrawal', 'transfer','dealer_sell','dealer_buy','dealer_payout','cash_in','cash_out','internal_transfer')]
         kinds = list(dict.fromkeys(kinds))
         bank_id = request.args.get('bank_id', '').strip()
 
@@ -1666,7 +1666,7 @@ def create_app(test_config=None):
                 grouped.setdefault(transaction_id, []).append((delta, name))
             for t in records.items:
                 movements = grouped.get(t.id, [])
-                if t.kind == 'transfer':
+                if t.kind in ('transfer','internal_transfer'):
                     source = next((name for delta, name in movements if delta < 0), 'Unknown')
                     destination = next((name for delta, name in movements if delta > 0), 'Unknown')
                     transaction_banks[t.id] = f'{source} → {destination}'
@@ -1792,7 +1792,7 @@ def create_app(test_config=None):
             amount=amount_positive(request.form.get('amount',''))
             bank_id=request.form.get('bank_id','').strip()
             to_bank_id=request.form.get('to_bank_id','').strip() if kind=='transfer' else ''
-            if kind=='transfer' and (not to_bank_id or to_bank_id==bank_id): raise ValueError('Choose two different banks')
+            if kind in ('transfer','internal_transfer') and (not to_bank_id or to_bank_id==bank_id): raise ValueError('Choose two different banks')
             old_entries=Entry.query.filter_by(transaction_id=t.id).all()
             old_ids={e.bank_id for e in old_entries}
             new_ids={bank_id}|({to_bank_id} if to_bank_id else set())
