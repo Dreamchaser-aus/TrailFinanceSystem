@@ -204,12 +204,53 @@
       dl.append(dt,dd);
     }
   }
-  form.addEventListener('submit',function(e){
-    if(posting)return;
+  let checkingReference=false;
+  form.addEventListener('submit',async function(e){
     e.preventDefault();
+    if(posting||checkingReference)return;
+    clearReferenceError();
     if(!form.reportValidity())return;
     if(['transfer','internal_transfer'].includes(kind.value)&&bank.value===toBank.value){alert('Choose two different bank accounts');return;}
-    showReview();bootstrap.Modal.getOrCreateInstance(get('newTransactionEntryModal')).hide();get('newTransactionEntryModal').addEventListener('hidden.bs.modal',function onEntryHidden(){this.removeEventListener('hidden.bs.modal',onEntryHidden);confirmModal.show();},{once:true});
+    if(needsCustomerReference(kind.value)){
+      checkingReference=true;
+      const reviewButton=get('submitBtn');
+      reviewButton.disabled=true;
+      const oldLabel=reviewButton.textContent;
+      reviewButton.textContent='Checking Transaction ID...';
+      const checkedValue=reference.value.trim();
+      const checkedKind=kind.value;
+      try{
+        const body=new FormData();
+        body.set('csrf_token',form.querySelector('[name="csrf_token"]').value);
+        body.set('kind',checkedKind);
+        body.set('reference',checkedValue);
+        const response=await fetch({{ url_for('check_transaction_reference')|tojson }},{method:'POST',body,headers:{'Accept':'application/json'},credentials:'same-origin'});
+        const result=await response.json();
+        if(reference.value.trim()!==checkedValue||kind.value!==checkedKind)return;
+        if(result.duplicate){
+          reference.classList.add('is-invalid');
+          get('referenceError').textContent='Duplicate Transaction ID';
+          reference.focus();
+          return;
+        }
+        if(!response.ok||!result.ok)throw new Error(result.error||'Unable to validate Transaction ID. Please try again.');
+      }catch(err){
+        get('transactionEntryError').textContent=err.message||'Unable to validate Transaction ID. Please try again.';
+        get('transactionEntryError').classList.remove('d-none');
+        return;
+      }finally{
+        checkingReference=false;
+        reviewButton.disabled=false;
+        reviewButton.textContent=oldLabel;
+      }
+    }
+    // Only open the confirmation modal after the ID has passed the preflight check.
+    showReview();
+    bootstrap.Modal.getOrCreateInstance(get('newTransactionEntryModal')).hide();
+    get('newTransactionEntryModal').addEventListener('hidden.bs.modal',function onEntryHidden(){
+      this.removeEventListener('hidden.bs.modal',onEntryHidden);
+      confirmModal.show();
+    },{once:true});
   });
   get('transactionConfirmModal').addEventListener('hidden.bs.modal',function(){if(!posting)bootstrap.Modal.getOrCreateInstance(get('newTransactionEntryModal')).show();});
   get('confirmPostBtn').addEventListener('click',function(){
