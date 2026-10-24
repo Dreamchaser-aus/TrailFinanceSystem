@@ -8,7 +8,7 @@
  <div class="modal-dialog modal-dialog-centered modal-lg modal-dialog-scrollable"><div class="modal-content">
  <div class="modal-header"><h5 class="modal-title" id="newTransactionEntryTitle">Add New Transaction</h5><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button></div>
  <div class="modal-body">
-  <form method="post" id="newTransactionForm">
+  <form method="post" id="newTransactionForm"><div class="alert alert-danger d-none" id="transactionEntryError" role="alert"></div>
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <div class="row g-3">
       <div class="col-12 col-md-6"><label class="form-label fw-semibold" for="business_date">Transaction Date (MYT)</label><select class="form-select" id="business_date" name="business_date" required><option value="{{entry_today}}">Today — {{entry_today}}</option><option value="{{entry_yesterday}}">Yesterday — {{entry_yesterday}}</option></select><div class="form-text">Only today or yesterday. Actual creation time is always recorded separately.</div></div>
@@ -24,7 +24,7 @@
           <option value="cash_out">Cash Out — External AUD Paid</option>
         </select>
       </div>
-      <div class="col-12 col-md-6"><label class="form-label fw-semibold" for="reference">Transaction ID / Reference</label><input class="form-control" id="reference" name="reference" maxlength="120" required placeholder="Enter platform transaction ID"><div class="form-text" id="referenceHelp">Customer transactions: enter the original transaction ID.</div></div>
+      <div class="col-12 col-md-6"><label class="form-label fw-semibold" for="reference">Transaction ID / Reference</label><input class="form-control" id="reference" name="reference" maxlength="120" required placeholder="Enter platform transaction ID"><div class="form-text" id="referenceHelp">Customer transactions: enter the original transaction ID.</div><div class="invalid-feedback" id="referenceError" role="alert" aria-live="polite"></div></div>
       <div class="col-12 col-md-6"><label class="form-label fw-semibold" for="amount">Amount (AUD)</label><input class="form-control" type="number" inputmode="decimal" id="amount" name="amount" min="0.01" step="0.01" required></div>
       <div class="col-12 col-md-6" id="bankBlock"><label class="form-label fw-semibold" id="bankLabel" for="bank_id">Receiving Bank</label><select class="form-select" id="bank_id" name="bank_id"><option value="">Select bank</option>{% for bank in banks %}<option value="{{ bank.id }}">{{ bank.name }}</option>{% endfor %}</select></div>
       <div class="col-12 col-md-6 d-none" id="toBankBlock"><label class="form-label fw-semibold" for="to_bank_id">Destination Bank</label><select class="form-select" id="to_bank_id" name="to_bank_id"><option value="">Select destination</option>{% for bank in banks %}<option value="{{ bank.id }}">{{ bank.name }}</option>{% endfor %}</select></div>
@@ -154,7 +154,9 @@
       ? 'Required: enter the unique transaction ID from your platform.'
       : 'BankFlow automatically generates a unique transaction ID when saved. It cannot be edited.';
   }
-  kind.addEventListener('change',updateReference);
+  function clearReferenceError(){reference.classList.remove('is-invalid');get('referenceError').textContent='';}
+  reference.addEventListener('input',clearReferenceError);
+  kind.addEventListener('change',function(){clearReferenceError();updateReference();});
   const money = n => Number.isFinite(n) ? n.toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2}) : '0.00';
   function refresh() {
     const k=kind.value, isDealer=dealerKinds.includes(k), direct=k==='dealer_payout', transfer=['transfer','internal_transfer'].includes(k);
@@ -215,8 +217,27 @@
     if(!form.reportValidity()) {confirmModal.hide();return;}
     if(['transfer','internal_transfer'].includes(kind.value)&&bank.value===toBank.value){confirmModal.hide();alert('Choose two different bank accounts');return;}
     posting=true;
-    this.disabled=true;this.textContent='Posting...';get('submitBtn').disabled=true;
-    form.submit();
+    const button=this;
+    button.disabled=true;button.textContent='Posting...';get('submitBtn').disabled=true;
+    clearReferenceError();get('transactionEntryError').classList.add('d-none');
+    fetch(form.action||window.location.href,{method:'POST',body:new FormData(form),headers:{'Accept':'application/json'},credentials:'same-origin'})
+      .then(async response=>{
+        const data=await response.json();
+        if(!response.ok||!data.ok){throw data;}
+        window.location.assign(data.redirect||window.location.href);
+      })
+      .catch(error=>{
+        posting=false;button.disabled=false;button.textContent='Confirm & Post';get('submitBtn').disabled=false;
+        const message=error?.error||'Unable to submit transaction. Please try again.';
+        const duplicate=error?.field==='reference';
+        if(duplicate){reference.classList.add('is-invalid');get('referenceError').textContent=message;}
+        else {get('transactionEntryError').textContent=message;get('transactionEntryError').classList.remove('d-none');}
+        confirmModal.hide();
+        get('newTransactionEntryModal').addEventListener('shown.bs.modal',function onShown(){
+          this.removeEventListener('shown.bs.modal',onShown);
+          if(duplicate)reference.focus();
+        },{once:true});
+      });
   });
   updateReference();refresh();
 })();
