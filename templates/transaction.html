@@ -20,6 +20,9 @@
           <option value="dealer_sell">Sell AUD — Bank to Dealer</option>
           <option value="dealer_buy">Buy AUD — Dealer to Bank</option>
           <option value="transfer">Bank to Bank Transfer</option>
+          <option value="cash_in">Cash In — External AUD Received</option>
+          <option value="cash_out">Cash Out — External AUD Paid</option>
+          <option value="internal_transfer">Internal Transfer — AUD Bank to Bank</option>
         </select>
       </div>
       <div class="col-12 col-md-6"><label class="form-label fw-semibold" for="reference">Transaction ID / Reference</label><input class="form-control" id="reference" name="reference" maxlength="120" required placeholder="Unique reference"></div>
@@ -142,20 +145,20 @@
   const dealerKinds=['dealer_sell','dealer_buy','dealer_payout'];
   const money = n => Number.isFinite(n) ? n.toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2}) : '0.00';
   function refresh() {
-    const k=kind.value, isDealer=dealerKinds.includes(k), direct=k==='dealer_payout', transfer=k==='transfer';
+    const k=kind.value, isDealer=dealerKinds.includes(k), direct=k==='dealer_payout', transfer=['transfer','internal_transfer'].includes(k);
     get('bankBlock').classList.toggle('d-none',direct);
     get('toBankBlock').classList.toggle('d-none',!transfer);
     get('dealerBlock').classList.toggle('d-none',!isDealer);
     get('rateBlock').classList.toggle('d-none',!isDealer);
     get('customerBlock').classList.toggle('d-none',!['deposit','withdrawal','dealer_payout'].includes(k));
-    get('bankLabel').textContent=['deposit','dealer_buy'].includes(k)?'Receiving Bank':'Source Bank';
+    get('bankLabel').textContent=['deposit','dealer_buy','cash_in'].includes(k)?'Receiving Bank':'Source Bank';
     bank.required=!direct; toBank.required=transfer; dealer.required=isDealer; rate.required=isDealer; customer.required=direct;
     if(direct) bank.value='';
     if(!transfer) toBank.value='';
     const aud=Number(amount.value)||0, fx=Number(rate.value)||0;
     let bankImpact='No bank movement';
-    if(k==='deposit'||k==='dealer_buy') bankImpact='Bank +AUD '+money(aud);
-    else if(k==='withdrawal'||k==='dealer_sell') bankImpact='Bank −AUD '+money(aud);
+    if(['deposit','dealer_buy','cash_in'].includes(k)) bankImpact='Bank +AUD '+money(aud);
+    else if(['withdrawal','dealer_sell','cash_out'].includes(k)) bankImpact='Bank −AUD '+money(aud);
     else if(transfer) bankImpact='Source −AUD '+money(aud)+'; destination +AUD '+money(aud);
     let msg='<strong>Impact Preview</strong><div>'+bankImpact+'</div>';
     if(isDealer) msg+='<div>Dealer '+(k==='dealer_sell'?'MYR receivable':'MYR payable')+': RM '+money(aud*fx)+'</div>';
@@ -174,7 +177,7 @@
       ['Reference',get('reference').value.trim()],
       ['Amount (AUD)',money(Number(amount.value))],
       ['Bank',kind.value==='dealer_payout'?'Not applicable':selectedText(bank)],
-      ['Destination Bank',kind.value==='transfer'?selectedText(toBank):null],
+      ['Destination Bank',['transfer','internal_transfer'].includes(kind.value)?selectedText(toBank):null],
       ['Dealer',dealerKinds.includes(kind.value)?selectedText(dealer):null],
       ['Exchange Rate',dealerKinds.includes(kind.value)?get('rate').value:null],
       ['Customer ID',['deposit','withdrawal','dealer_payout'].includes(kind.value)?customer.value.trim()||'—':null],
@@ -191,14 +194,14 @@
     if(posting)return;
     e.preventDefault();
     if(!form.reportValidity())return;
-    if(kind.value==='transfer'&&bank.value===toBank.value){alert('Choose two different bank accounts');return;}
+    if(['transfer','internal_transfer'].includes(kind.value)&&bank.value===toBank.value){alert('Choose two different bank accounts');return;}
     showReview();bootstrap.Modal.getOrCreateInstance(get('newTransactionEntryModal')).hide();get('newTransactionEntryModal').addEventListener('hidden.bs.modal',function onEntryHidden(){this.removeEventListener('hidden.bs.modal',onEntryHidden);confirmModal.show();},{once:true});
   });
   get('transactionConfirmModal').addEventListener('hidden.bs.modal',function(){if(!posting)bootstrap.Modal.getOrCreateInstance(get('newTransactionEntryModal')).show();});
   get('confirmPostBtn').addEventListener('click',function(){
     if(posting)return;
     if(!form.reportValidity()) {confirmModal.hide();return;}
-    if(kind.value==='transfer'&&bank.value===toBank.value){confirmModal.hide();alert('Choose two different bank accounts');return;}
+    if(['transfer','internal_transfer'].includes(kind.value)&&bank.value===toBank.value){confirmModal.hide();alert('Choose two different bank accounts');return;}
     posting=true;
     this.disabled=true;this.textContent='Posting...';get('submitBtn').disabled=true;
     form.submit();
